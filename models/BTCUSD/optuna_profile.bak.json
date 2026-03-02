@@ -1,0 +1,10 @@
+{
+  "long_threshold": 0.55,
+  "short_threshold": 0.63,
+  "risk_per_trade": 0.006,
+  "atr_stop_loss_mult": 1.3,
+  "atr_take_profit_mult": 3.7,
+  "sequence_probability_weight": 0.2,
+  "objective": -4.672116266502062,
+  "updated_at": "2026-03-01T11:22:53.044691+00:00"
+}

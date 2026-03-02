@@ -1,0 +1,14 @@
+{
+  "symbol": "BTCUSD",
+  "profile_accepted": false,
+  "profile_source": "walk_forward_rejected",
+  "updated_at": "2026-03-01T12:18:16.541240+00:00",
+  "walk_forward_fold_count": 5,
+  "walk_forward_positive_return_folds": 1,
+  "walk_forward_positive_objective_folds": 4,
+  "walk_forward_min_positive_return_folds": 2,
+  "walk_forward_positive_return_threshold_pct": 0.0,
+  "walk_forward_mean_accuracy": 0.8852941176470589,
+  "walk_forward_mean_roc_auc": 0.7013794608054493,
+  "rejection_reason": "Only 1 positive-return folds (required 2)"
+}

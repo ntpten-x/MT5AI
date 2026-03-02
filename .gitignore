@@ -1,0 +1,15 @@
+.env
+.venv/
+*.lock
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.pyd
+*.log
+database/*.db
+logs/*.log
+models/*.joblib
+models/*.json
+data/*.csv
+data/*.parquet

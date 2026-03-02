@@ -1,0 +1,345 @@
+{
+  "folds": [
+    {
+      "fold": 1,
+      "train_rows": 6162,
+      "calibration_rows": 1320,
+      "test_rows": 1496,
+      "train_summary": {
+        "long": {
+          "rows_train": 6162,
+          "positive_rate_train": 0.028562155144433627,
+          "calibration_method": "isotonic",
+          "calibration_rows": 1320,
+          "brier_raw": 0.11666882062106165,
+          "brier_calibrated": 0.10648737302221678,
+          "log_loss_raw": 0.4420257380636785,
+          "log_loss_calibrated": 0.357928551823169
+        },
+        "short": {
+          "rows_train": 6162,
+          "positive_rate_train": 0.03391755923401493,
+          "calibration_method": "isotonic",
+          "calibration_rows": 1320,
+          "brier_raw": 0.12457536982868549,
+          "brier_calibrated": 0.1137226493482598,
+          "log_loss_raw": 0.43908376030327567,
+          "log_loss_calibrated": 0.36666980217143835
+        }
+      },
+      "threshold_tuning": {
+        "long_threshold": 0.5700000000000001,
+        "short_threshold": 0.67,
+        "risk_per_trade": 0.0055000000000000005,
+        "atr_stop_loss_mult": 1.9,
+        "atr_take_profit_mult": 3.3,
+        "sequence_probability_weight": 0.55,
+        "objective": 2.3272285531825427
+      },
+      "test_metrics": {
+        "long": {
+          "rows_eval": 1496,
+          "positive_rate_eval": 0.2580213903743315,
+          "threshold": 0.5700000000000001,
+          "accuracy": 0.7419786096256684,
+          "precision": 0.0,
+          "recall": 0.0,
+          "brier_score": 0.20169142171799703,
+          "log_loss": 0.6108202467733842,
+          "roc_auc": 0.5671567940997992
+        },
+        "short": {
+          "rows_eval": 1496,
+          "positive_rate_eval": 0.25668449197860965,
+          "threshold": 0.67,
+          "accuracy": 0.7433155080213903,
+          "precision": 0.0,
+          "recall": 0.0,
+          "brier_score": 0.18787758299874827,
+          "log_loss": 0.5792911004536605,
+          "roc_auc": 0.6626386390887291
+        }
+      },
+      "backtest": {
+        "Total Return [%]": -0.10716529458582613,
+        "Win Rate [%]": 41.66666666666667,
+        "Sharpe Ratio": -0.2202945058243385,
+        "Max Drawdown [%]": 4.139822251465944
+      }
+    },
+    {
+      "fold": 2,
+      "train_rows": 7394,
+      "calibration_rows": 1584,
+      "test_rows": 1496,
+      "train_summary": {
+        "long": {
+          "rows_train": 7394,
+          "positive_rate_train": 0.04557749526643224,
+          "calibration_method": "isotonic",
+          "calibration_rows": 1584,
+          "brier_raw": 0.20194331330909887,
+          "brier_calibrated": 0.17399089409599017,
+          "log_loss_raw": 0.6196056876799159,
+          "log_loss_calibrated": 0.5223244177917655
+        },
+        "short": {
+          "rows_train": 7394,
+          "positive_rate_train": 0.05369218285096024,
+          "calibration_method": "isotonic",
+          "calibration_rows": 1584,
+          "brier_raw": 0.1835373445792146,
+          "brier_calibrated": 0.16949674376512644,
+          "log_loss_raw": 0.5715035610580175,
+          "log_loss_calibrated": 0.5096263784982823
+        }
+      },
+      "threshold_tuning": {
+        "long_threshold": 0.54,
+        "short_threshold": 0.72,
+        "risk_per_trade": 0.003,
+        "atr_stop_loss_mult": 2.7,
+        "atr_take_profit_mult": 3.0,
+        "sequence_probability_weight": 0.5,
+        "objective": -13.165566005661459
+      },
+      "test_metrics": {
+        "long": {
+          "rows_eval": 1496,
+          "positive_rate_eval": 0.10762032085561497,
+          "threshold": 0.54,
+          "accuracy": 0.8917112299465241,
+          "precision": 0.0,
+          "recall": 0.0,
+          "brier_score": 0.10123986857409133,
+          "log_loss": 0.36866190160440876,
+          "roc_auc": 0.7198594924046806
+        },
+        "short": {
+          "rows_eval": 1496,
+          "positive_rate_eval": 0.12366310160427807,
+          "threshold": 0.72,
+          "accuracy": 0.8770053475935828,
+          "precision": 1.0,
+          "recall": 0.005405405405405406,
+          "brier_score": 0.11578319209624881,
+          "log_loss": 0.3874761435199196,
+          "roc_auc": 0.6861545756282599
+        }
+      },
+      "backtest": {
+        "Total Return [%]": 0.0,
+        "Win Rate [%]": null,
+        "Sharpe Ratio": Infinity,
+        "Max Drawdown [%]": null
+      }
+    },
+    {
+      "fold": 3,
+      "train_rows": 8626,
+      "calibration_rows": 1848,
+      "test_rows": 1496,
+      "train_summary": {
+        "long": {
+          "rows_train": 8626,
+          "positive_rate_train": 0.07975886853698122,
+          "calibration_method": "isotonic",
+          "calibration_rows": 1848,
+          "brier_raw": 0.10344013118854856,
+          "brier_calibrated": 0.09071539420551757,
+          "log_loss_raw": 0.3442357989913103,
+          "log_loss_calibrated": 0.309594122747459
+        },
+        "short": {
+          "rows_train": 8626,
+          "positive_rate_train": 0.08845351263621609,
+          "calibration_method": "isotonic",
+          "calibration_rows": 1848,
+          "brier_raw": 0.0953359390876521,
+          "brier_calibrated": 0.09044239994815555,
+          "log_loss_raw": 0.3266038889883678,
+          "log_loss_calibrated": 0.3107185787157198
+        }
+      },
+      "threshold_tuning": {
+        "long_threshold": 0.5700000000000001,
+        "short_threshold": 0.76,
+        "risk_per_trade": 0.0025,
+        "atr_stop_loss_mult": 2.9000000000000004,
+        "atr_take_profit_mult": 2.2,
+        "sequence_probability_weight": 0.55,
+        "objective": 4.755884487887352
+      },
+      "test_metrics": {
+        "long": {
+          "rows_eval": 1496,
+          "positive_rate_eval": 0.04478609625668449,
+          "threshold": 0.5700000000000001,
+          "accuracy": 0.9552139037433155,
+          "precision": 0.0,
+          "recall": 0.0,
+          "brier_score": 0.04346016738868298,
+          "log_loss": 0.20087261748244478,
+          "roc_auc": 0.6414933728836573
+        },
+        "short": {
+          "rows_eval": 1496,
+          "positive_rate_eval": 0.05815508021390375,
+          "threshold": 0.76,
+          "accuracy": 0.9418449197860963,
+          "precision": 0.0,
+          "recall": 0.0,
+          "brier_score": 0.05433515970665612,
+          "log_loss": 0.22349582317597977,
+          "roc_auc": 0.7028788657481053
+        }
+      },
+      "backtest": {
+        "Total Return [%]": 0.0,
+        "Win Rate [%]": null,
+        "Sharpe Ratio": Infinity,
+        "Max Drawdown [%]": null
+      }
+    },
+    {
+      "fold": 4,
+      "train_rows": 9858,
+      "calibration_rows": 2112,
+      "test_rows": 1496,
+      "train_summary": {
+        "long": {
+          "rows_train": 9858,
+          "positive_rate_train": 0.08287685128829377,
+          "calibration_method": "isotonic",
+          "calibration_rows": 2112,
+          "brier_raw": 0.05977718241723187,
+          "brier_calibrated": 0.056710661498084625,
+          "log_loss_raw": 0.22729108527359893,
+          "log_loss_calibrated": 0.21192458036354728
+        },
+        "short": {
+          "rows_train": 9858,
+          "positive_rate_train": 0.09291945627916413,
+          "calibration_method": "isotonic",
+          "calibration_rows": 2112,
+          "brier_raw": 0.06091937565357727,
+          "brier_calibrated": 0.057693464631885356,
+          "log_loss_raw": 0.231631940125922,
+          "log_loss_calibrated": 0.21770755370324194
+        }
+      },
+      "threshold_tuning": {
+        "long_threshold": 0.5,
+        "short_threshold": 0.6799999999999999,
+        "risk_per_trade": 0.006,
+        "atr_stop_loss_mult": 3.4000000000000004,
+        "atr_take_profit_mult": 3.8000000000000003,
+        "sequence_probability_weight": 0.55,
+        "objective": 5.973436787382112
+      },
+      "test_metrics": {
+        "long": {
+          "rows_eval": 1496,
+          "positive_rate_eval": 0.05080213903743316,
+          "threshold": 0.5,
+          "accuracy": 0.9471925133689839,
+          "precision": 0.0,
+          "recall": 0.0,
+          "brier_score": 0.04415899369163942,
+          "log_loss": 0.1673859264408151,
+          "roc_auc": 0.8195746849518162
+        },
+        "short": {
+          "rows_eval": 1496,
+          "positive_rate_eval": 0.05481283422459893,
+          "threshold": 0.6799999999999999,
+          "accuracy": 0.9451871657754011,
+          "precision": 0.0,
+          "recall": 0.0,
+          "brier_score": 0.04930509205287999,
+          "log_loss": 0.1881499769649218,
+          "roc_auc": 0.79842256873771
+        }
+      },
+      "backtest": {
+        "Total Return [%]": 1.4788757789378622,
+        "Win Rate [%]": 100.0,
+        "Sharpe Ratio": 11.649014182628887,
+        "Max Drawdown [%]": 0.5280328454557672
+      }
+    },
+    {
+      "fold": 5,
+      "train_rows": 11090,
+      "calibration_rows": 2376,
+      "test_rows": 1496,
+      "train_summary": {
+        "long": {
+          "rows_train": 11090,
+          "positive_rate_train": 0.0824165915238954,
+          "calibration_method": "isotonic",
+          "calibration_rows": 2376,
+          "brier_raw": 0.04834657230746536,
+          "brier_calibrated": 0.043818117558845,
+          "log_loss_raw": 0.18439487103533306,
+          "log_loss_calibrated": 0.16854385397993338
+        },
+        "short": {
+          "rows_train": 11090,
+          "positive_rate_train": 0.09062218214607755,
+          "calibration_method": "isotonic",
+          "calibration_rows": 2376,
+          "brier_raw": 0.05006997628371304,
+          "brier_calibrated": 0.048282273064835006,
+          "log_loss_raw": 0.1876955273303707,
+          "log_loss_calibrated": 0.1790975518851317
+        }
+      },
+      "threshold_tuning": {
+        "long_threshold": 0.5,
+        "short_threshold": 0.72,
+        "risk_per_trade": 0.0035,
+        "atr_stop_loss_mult": 3.0,
+        "atr_take_profit_mult": 3.4000000000000004,
+        "sequence_probability_weight": 0.6,
+        "objective": 5.1485520854067195
+      },
+      "test_metrics": {
+        "long": {
+          "rows_eval": 1496,
+          "positive_rate_eval": 0.11096256684491979,
+          "threshold": 0.5,
+          "accuracy": 0.8903743315508021,
+          "precision": 0.625,
+          "recall": 0.030120481927710843,
+          "brier_score": 0.09340054438871974,
+          "log_loss": 0.33590786116991467,
+          "roc_auc": 0.7426238789745448
+        },
+        "short": {
+          "rows_eval": 1496,
+          "positive_rate_eval": 0.08088235294117647,
+          "threshold": 0.72,
+          "accuracy": 0.9191176470588235,
+          "precision": 0.0,
+          "recall": 0.0,
+          "brier_score": 0.07391441695998116,
+          "log_loss": 0.27692718672991196,
+          "roc_auc": 0.6729917355371902
+        }
+      },
+      "backtest": {
+        "Total Return [%]": -0.08258642644728553,
+        "Win Rate [%]": 50.0,
+        "Sharpe Ratio": -1.4316686840017583,
+        "Max Drawdown [%]": 0.49403929416820347
+      }
+    }
+  ],
+  "summary": {
+    "fold_count": 5,
+    "mean_accuracy": 0.8852941176470589,
+    "mean_roc_auc": 0.7013794608054493
+  },
+  "symbol": "BTCUSD"
+}

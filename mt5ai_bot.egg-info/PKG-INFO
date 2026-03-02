@@ -1,0 +1,119 @@
+Metadata-Version: 2.4
+Name: mt5ai-bot
+Version: 0.1.0
+Summary: Production-oriented MT5 trading bot scaffold with SQLite, XGBoost, Chronos-2 hooks, and VectorBT.
+Author: Codex
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: APScheduler>=3.10.4
+Requires-Dist: MetaTrader5>=5.0.47
+Requires-Dist: httpx>=0.27.2
+Requires-Dist: joblib>=1.4.2
+Requires-Dist: loguru>=0.7.2
+Requires-Dist: numpy>=1.26.4
+Requires-Dist: pandas>=2.2.3
+Requires-Dist: pandas-ta-classic>=0.3.59
+Requires-Dist: pydantic>=2.9.2
+Requires-Dist: pydantic-settings>=2.6.1
+Requires-Dist: python-dotenv>=1.0.1
+Requires-Dist: scikit-learn>=1.5.2
+Requires-Dist: vectorbt>=0.27.2
+Requires-Dist: xgboost>=2.1.1
+Provides-Extra: chronos
+Requires-Dist: chronos-forecasting>=2.0; extra == "chronos"
+Requires-Dist: torch>=2.4; extra == "chronos"
+Provides-Extra: dev
+Requires-Dist: pytest>=8.3.3; extra == "dev"
+Requires-Dist: ruff>=0.8.6; extra == "dev"
+
+# MT5AI Bot
+
+MT5AI Bot is a production-oriented scaffold for MetaTrader 5 algorithmic trading. It is designed around four layers:
+
+1. Data layer: pull OHLCV from MT5 and persist to SQLite with WAL mode.
+2. Brain layer: engineer features, train XGBoost, and optionally blend in Chronos-2 forecasts.
+3. Strategy and risk layer: session filters, spread control, ATR-based position sizing, and daily drawdown guard.
+4. Execution layer: retry-aware order routing with MT5 deviation handling and Telegram alerts.
+
+## Quick Start
+
+1. Create a virtual environment.
+2. Install dependencies.
+3. Copy `.env.example` to `.env` and fill in your MT5 demo credentials.
+4. Initialize the database and backfill bars.
+5. Train the XGBoost model.
+6. Run backtests, walk-forward analysis, then start demo trading.
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e .[dev]
+copy .env.example .env
+python main.py init-db
+python main.py backfill
+python main.py train-xgb --symbol EURUSD
+python main.py backtest --symbol EURUSD
+python main.py walk-forward --symbol EURUSD
+python main.py run-live
+```
+
+## Optional Chronos-2
+
+Chronos-2 is wired as an optional component because it is heavier than the rest of the stack. Install it only when you are ready to use it:
+
+```powershell
+pip install -e .[chronos]
+```
+
+Then set:
+
+```env
+MODEL__CHRONOS_ENABLED=true
+MODEL__CHRONOS_MODEL_ID=amazon/chronos-2
+MODEL__CHRONOS_DEVICE=cpu
+```
+
+## Commands
+
+- `init-db`: create SQLite schema.
+- `backfill`: fetch historical bars from MT5 into SQLite.
+- `collect`: refresh the latest bars.
+- `train-xgb`: train and save the XGBoost classifier.
+- `backtest`: run a VectorBT backtest.
+- `walk-forward`: run rolling walk-forward validation to reduce overfitting risk.
+- `heartbeat`: test MT5 connectivity and snapshot account equity.
+- `run-live`: start APScheduler with trading and heartbeat jobs.
+
+## Project Layout
+
+```text
+.
+├── main.py
+├── config.py
+├── database/
+├── logs/
+├── models/
+├── modules/
+│   ├── backtest.py
+│   ├── brain_ai.py
+│   ├── db.py
+│   ├── execution.py
+│   ├── feature_engineering.py
+│   ├── logging_setup.py
+│   ├── mt5_bridge.py
+│   ├── notifications.py
+│   ├── risk_control.py
+│   ├── service.py
+│   ├── signals.py
+│   ├── timeframes.py
+│   ├── types.py
+│   └── walk_forward.py
+└── tests/
+```
+
+## Notes
+
+- Start on MT5 demo only.
+- Keep `EXECUTION__DRY_RUN=true` until the whole path is validated end-to-end.
+- Daily loss guard is enforced from equity snapshots, not just closed trade PnL.
+- Spread filtering and retry logic are built in, but you still need broker-specific tuning.

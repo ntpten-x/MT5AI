@@ -1,0 +1,2 @@
+[console_scripts]
+mt5ai = main:main
