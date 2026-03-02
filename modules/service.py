@@ -25,7 +25,7 @@ from modules.risk_control import RiskManager
 from modules.runtime_lock import SingleInstanceLock
 from modules.signals import SignalEngine, heuristic_probabilities
 from modules.spread_profile import SpreadProfileManager
-from modules.timeframes import scheduler_trigger_args
+from modules.timeframes import scheduler_trigger_args, timeframe_minutes
 from modules.walk_forward import WalkForwardEngine
 
 
@@ -126,6 +126,128 @@ class TradingBotService:
                 continue
         return refs
 
+    def _confirmation_timeframes(self) -> list[str]:
+        return [
+            timeframe
+            for timeframe in self.settings.trading_timeframes()
+            if timeframe != self.settings.trading.timeframe
+        ]
+
+    def _bars_for_timeframe(self, timeframe: str, base_bars: int) -> int:
+        primary_minutes = timeframe_minutes(self.settings.trading.timeframe)
+        target_minutes = timeframe_minutes(timeframe)
+        if target_minutes <= 0:
+            return int(base_bars)
+        scaled = ((max(1, int(base_bars)) * primary_minutes) + target_minutes - 1) // target_minutes
+        if timeframe == self.settings.trading.timeframe:
+            return int(base_bars)
+        return max(300, int(scaled))
+
+    def _load_timeframe_context_from_db(self, symbol: str, base_bars: int) -> dict[str, Any]:
+        frames: dict[str, Any] = {}
+        for timeframe in self._confirmation_timeframes():
+            frame = self.database.load_bars(
+                symbol,
+                timeframe,
+                limit=self._bars_for_timeframe(timeframe, base_bars),
+            )
+            if not frame.empty:
+                frames[timeframe] = frame
+        return frames
+
+    def _fetch_timeframe_context_live(self, symbol: str, base_bars: int) -> dict[str, Any]:
+        frames: dict[str, Any] = {}
+        for timeframe in self._confirmation_timeframes():
+            frame = self.bridge.fetch_rates(
+                symbol,
+                timeframe,
+                self._bars_for_timeframe(timeframe, base_bars),
+            )
+            if frame.empty:
+                continue
+            self.database.upsert_bars(symbol, timeframe, frame)
+            frames[timeframe] = frame
+        return frames
+
+    def _apply_mtf_confirmation(self, signal, feature_frame) -> None:
+        if signal.side == "flat" or feature_frame.empty:
+            return
+        row = feature_frame.iloc[-1]
+        context_count = int(round(float(row.get("mtf_context_count", 0.0) or 0.0)))
+        alignment_score = float(row.get("mtf_alignment_score", 0.0) or 0.0)
+        conflict_score = float(row.get("mtf_conflict_score", 0.0) or 0.0)
+        signal.context.update(
+            {
+                "mtf_context_count": context_count,
+                "mtf_alignment_score": alignment_score,
+                "mtf_conflict_score": conflict_score,
+            }
+        )
+        if context_count <= 0:
+            return
+        threshold = float(self.settings.trading.confirmation_alignment_threshold)
+        if signal.side == "long" and alignment_score < threshold:
+            signal.side = "flat"
+            signal.reason = f"{signal.reason},mtf_blocks_long".strip(",")
+        elif signal.side == "short" and alignment_score > -threshold:
+            signal.side = "flat"
+            signal.reason = f"{signal.reason},mtf_blocks_short".strip(",")
+
+    def _effective_risk_fraction(self, symbol: str, signal, account: dict[str, Any], feature_frame) -> float:
+        base_risk = self.settings.risk_per_trade_for(symbol)
+        if signal.side == "flat" or not self.settings.risk.adaptive_risk_enabled or feature_frame.empty:
+            signal.risk_fraction = float(base_risk)
+            return float(base_risk)
+
+        threshold = self.settings.threshold_for(symbol, signal.side)
+        confidence_edge = max(0.0, float(signal.probability) - float(threshold))
+        confidence_span = max(0.05, 1.0 - float(threshold))
+        confidence_ratio = min(1.0, confidence_edge / confidence_span)
+        confidence_factor = (
+            float(self.settings.risk.adaptive_risk_confidence_floor)
+            + (
+                float(self.settings.risk.adaptive_risk_confidence_ceiling)
+                - float(self.settings.risk.adaptive_risk_confidence_floor)
+            )
+            * confidence_ratio
+        )
+
+        row = feature_frame.iloc[-1]
+        alignment_score = float(row.get("mtf_alignment_score", 0.0) or 0.0)
+        directional_alignment = alignment_score if signal.side == "long" else -alignment_score
+        mtf_factor = 1.0 + (
+            max(0.0, directional_alignment) * float(self.settings.risk.adaptive_risk_mtf_boost)
+        )
+
+        balance = float(account.get("balance", 0.0) or 0.0)
+        equity = float(account.get("equity", balance) or balance)
+        floating_drawdown = max(0.0, (balance - equity) / balance) if balance > 0 else 0.0
+        drawdown_limit = max(float(self.settings.risk.daily_drawdown_limit), 1e-9)
+        drawdown_ratio = min(1.0, floating_drawdown / drawdown_limit)
+        drawdown_floor = float(np.clip(self.settings.risk.adaptive_risk_drawdown_floor, 0.0, 1.0))
+        drawdown_factor = 1.0 - ((1.0 - drawdown_floor) * drawdown_ratio)
+
+        effective = float(base_risk) * confidence_factor * mtf_factor * drawdown_factor
+        effective = float(
+            np.clip(
+                effective,
+                float(self.settings.risk.adaptive_risk_min),
+                float(self.settings.risk.adaptive_risk_max),
+            )
+        )
+        signal.risk_fraction = effective
+        signal.context.update(
+            {
+                "base_risk_fraction": float(base_risk),
+                "confidence_factor": float(confidence_factor),
+                "mtf_factor": float(mtf_factor),
+                "floating_drawdown": float(floating_drawdown),
+                "drawdown_factor": float(drawdown_factor),
+                "effective_risk_fraction": effective,
+            }
+        )
+        return effective
+
     def _heuristic_probabilities(self, feature_frame) -> tuple[float, float]:
         return heuristic_probabilities(feature_frame.iloc[-1])
 
@@ -184,6 +306,11 @@ class TradingBotService:
             if explicit_short_threshold is not None
             else short_model.effective_threshold(short_default),
         )
+
+    def _live_xgb_models_ready(self, symbol: str) -> bool:
+        if self.settings.execution.dry_run:
+            return True
+        return self._xgb_model(symbol, "long").is_ready() and self._xgb_model(symbol, "short").is_ready()
 
     def _sequence_model(self, symbol: str, target_side: str) -> TorchSequenceSignalModel:
         key = (symbol, target_side)
@@ -402,12 +529,19 @@ class TradingBotService:
     def backfill(self, symbol: str | None = None) -> dict[str, Any]:
         self.connect()
         summary: dict[str, Any] = {}
-        count = max(self.settings.trading.history_bars, self.settings.trading.train_bars)
+        base_count = max(self.settings.trading.history_bars, self.settings.trading.train_bars)
         for active_symbol in self._symbols(symbol):
             self.bridge.prepare_symbol(active_symbol)
-            frame = self.bridge.fetch_rates(active_symbol, self.settings.trading.timeframe, count)
-            upserted = self.database.upsert_bars(active_symbol, self.settings.trading.timeframe, frame)
-            summary[active_symbol] = {"bars": int(len(frame)), "upserted": upserted}
+            symbol_summary: dict[str, Any] = {}
+            for timeframe in self.settings.trading_timeframes():
+                frame = self.bridge.fetch_rates(
+                    active_symbol,
+                    timeframe,
+                    self._bars_for_timeframe(timeframe, base_count),
+                )
+                upserted = self.database.upsert_bars(active_symbol, timeframe, frame)
+                symbol_summary[timeframe] = {"bars": int(len(frame)), "upserted": upserted}
+            summary[active_symbol] = symbol_summary
         return summary
 
     def collect_latest(self, symbol: str | None = None) -> dict[str, Any]:
@@ -415,13 +549,16 @@ class TradingBotService:
         summary: dict[str, Any] = {}
         for active_symbol in self._symbols(symbol):
             self.bridge.prepare_symbol(active_symbol)
-            frame = self.bridge.fetch_rates(
-                active_symbol,
-                self.settings.trading.timeframe,
-                self.settings.trading.history_bars,
-            )
-            upserted = self.database.upsert_bars(active_symbol, self.settings.trading.timeframe, frame)
-            summary[active_symbol] = {"bars": int(len(frame)), "upserted": upserted}
+            symbol_summary: dict[str, Any] = {}
+            for timeframe in self.settings.trading_timeframes():
+                frame = self.bridge.fetch_rates(
+                    active_symbol,
+                    timeframe,
+                    self._bars_for_timeframe(timeframe, self.settings.trading.history_bars),
+                )
+                upserted = self.database.upsert_bars(active_symbol, timeframe, frame)
+                symbol_summary[timeframe] = {"bars": int(len(frame)), "upserted": upserted}
+            summary[active_symbol] = symbol_summary
         return summary
 
     def heartbeat(self) -> dict[str, Any]:
@@ -485,6 +622,10 @@ class TradingBotService:
         )
         if frame.empty:
             raise ValueError(f"No stored data for {target_symbol}. Run backfill first.")
+        timeframe_context_frames = self._load_timeframe_context_from_db(
+            target_symbol,
+            self.settings.trading.train_bars,
+        )
 
         supervised_frame = build_supervised_frame(
             frame,
@@ -492,6 +633,7 @@ class TradingBotService:
             edge_bps=self.settings.model.positive_return_bps,
             breakout_pct=self.settings.model.volatility_breakout_pct,
             symbol=target_symbol,
+            timeframe_context_frames=timeframe_context_frames,
         )
         if len(supervised_frame) < self.settings.model.training_min_rows:
             raise ValueError(
@@ -613,6 +755,10 @@ class TradingBotService:
         )
         if frame.empty:
             raise ValueError(f"No stored data for {target_symbol}. Run backfill first.")
+        timeframe_context_frames = self._load_timeframe_context_from_db(
+            target_symbol,
+            self.settings.trading.train_bars,
+        )
         long_model = self._xgb_model(target_symbol, "long")
         short_model = self._xgb_model(target_symbol, "short")
         lgbm_long_model = self._lgbm_model(target_symbol, "long") if self.settings.model.lightgbm_enabled else None
@@ -624,6 +770,7 @@ class TradingBotService:
         stats = self.backtest_engine.run(
             target_symbol,
             frame,
+            timeframe_context_frames=timeframe_context_frames,
             long_model=long_model,
             short_model=short_model,
             lgbm_long_model=lgbm_long_model,
@@ -641,7 +788,15 @@ class TradingBotService:
         )
         if frame.empty:
             raise ValueError(f"No stored data for {target_symbol}. Run backfill first.")
-        report = self.walk_forward_engine.run(target_symbol, frame)
+        timeframe_context_frames = self._load_timeframe_context_from_db(
+            target_symbol,
+            self.settings.trading.train_bars,
+        )
+        report = self.walk_forward_engine.run(
+            target_symbol,
+            frame,
+            timeframe_context_frames=timeframe_context_frames,
+        )
         report["symbol"] = target_symbol
         return report
 
@@ -661,7 +816,15 @@ class TradingBotService:
             )
             if frame.empty:
                 raise ValueError(f"No stored data for {target_symbol}. Run backfill first.")
-            report = self.walk_forward_engine.run(target_symbol, frame)
+            timeframe_context_frames = self._load_timeframe_context_from_db(
+                target_symbol,
+                self.settings.trading.train_bars,
+            )
+            report = self.walk_forward_engine.run(
+                target_symbol,
+                frame,
+                timeframe_context_frames=timeframe_context_frames,
+            )
             report["symbol"] = target_symbol
             outcome: dict[str, Any] = {"report": report}
             if write_report:
@@ -708,6 +871,10 @@ class TradingBotService:
                     self.settings.trading.history_bars,
                 )
                 self.database.upsert_bars(symbol, self.settings.trading.timeframe, market_frame)
+                timeframe_context_frames = self._fetch_timeframe_context_live(
+                    symbol,
+                    self.settings.trading.history_bars,
+                )
                 spread_points = self.risk_manager.spread_points(symbol_info)
                 current_time = datetime.now(timezone.utc)
                 news_guard = self.news_filter.evaluate(symbol, now=current_time)
@@ -866,11 +1033,31 @@ class TradingBotService:
                     market_frame,
                     symbol=symbol,
                     reference_frames=reference_frames,
+                    timeframe_context_frames=timeframe_context_frames,
                 )
                 usable = feature_frame.dropna(subset=FEATURE_COLUMNS).reset_index(drop=True)
                 if usable.empty:
                     self._log_cycle_skip(symbol, broker_symbol, "insufficient_features")
                     results.append({"symbol": symbol, "status": "skipped", "reason": "insufficient_features"})
+                    continue
+
+                if not self._live_xgb_models_ready(symbol):
+                    reason = f"Missing XGBoost artifacts for {symbol}; run train-xgb before live trading"
+                    self.database.record_event(
+                        "WARNING",
+                        "model_artifact_missing",
+                        reason,
+                        {"symbol": symbol, "broker_symbol": broker_symbol},
+                    )
+                    results.append(
+                        {
+                            "symbol": symbol,
+                            "broker_symbol": broker_symbol,
+                            "status": "skipped",
+                            "reason": reason,
+                        }
+                    )
+                    self._log_cycle_skip(symbol, broker_symbol, reason)
                     continue
 
                 xgb_long_probability, xgb_short_probability = self._xgb_probabilities(symbol, usable)
@@ -901,6 +1088,8 @@ class TradingBotService:
                     long_threshold=long_threshold,
                     short_threshold=short_threshold,
                 )
+                self._apply_mtf_confirmation(signal, usable)
+                effective_risk_fraction = self._effective_risk_fraction(symbol, signal, account, usable)
 
                 management_actions = self.execution_engine.manage_open_positions(symbol, market_frame)
                 
@@ -925,6 +1114,8 @@ class TradingBotService:
                     "chronos_direction": signal.chronos_direction,
                     "reason": signal.reason,
                     "news_guard": news_guard.reason,
+                    "effective_risk_fraction": effective_risk_fraction,
+                    "signal_context": dict(signal.context),
                     "execution_status": outcome.status,
                     "execution_message": outcome.message,
                     "spread_points": spread_points,

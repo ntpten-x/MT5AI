@@ -180,3 +180,17 @@ def test_settings_ignore_rejected_optimization_profile(tmp_path):
     assert settings.atr_stop_loss_mult_for("GOLD") == 1.8
     assert settings.atr_take_profit_mult_for("GOLD") == 3.0
     assert settings.sequence_probability_weight_for("GOLD") == settings.model.sequence_probability_weight
+
+
+def test_settings_parse_confirmation_timeframes_and_deduplicate():
+    settings = Settings(
+        _env_file=None,
+        trading={
+            "timeframe": "m5",
+            "confirmation_timeframes": "m15,h1,M15",
+        },
+    )
+
+    assert settings.trading.timeframe == "M5"
+    assert settings.trading.confirmation_timeframes == ["M15", "H1"]
+    assert settings.trading_timeframes() == ["M5", "M15", "H1"]

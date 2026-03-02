@@ -93,3 +93,30 @@ def test_risk_manager_loads_persisted_kill_switch(tmp_path):
 
     assert reloaded.kill_switch_active() is True
     assert reloaded.kill_switch_status()["reason"] == "persisted"
+
+
+def test_risk_manager_returns_zero_when_minimum_volume_exceeds_risk_budget():
+    settings = Settings(
+        _env_file=None,
+        trading={"symbols": ["EURUSD"]},
+        risk={"risk_per_trade": 0.005},
+    )
+    database = _Database(baseline_equity=1000.0, high_watermark=1000.0, consecutive_losses=0)
+    manager = RiskManager(settings, database)
+
+    volume = manager.calculate_volume(
+        "EURUSD",
+        {
+            "trade_tick_size": 0.00001,
+            "trade_tick_value": 1.0,
+            "trade_contract_size": 100000.0,
+            "volume_step": 0.01,
+            "volume_min": 0.01,
+            "volume_max": 100.0,
+        },
+        {"equity": 10.0},
+        entry_price=1.10000,
+        stop_price=1.09900,
+    )
+
+    assert volume == 0.0

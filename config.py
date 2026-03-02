@@ -110,6 +110,8 @@ class TradingSettings(BaseModel):
         default_factory=lambda: ["XAUUSD", "BTCUSD", "ETHUSD"]
     )
     timeframe: str = "M15"
+    confirmation_timeframes: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    confirmation_alignment_threshold: float = 0.5
     history_bars: int = 5_000
     train_bars: int = 15_000
     max_positions_per_symbol: int = 1
@@ -139,7 +141,7 @@ class TradingSettings(BaseModel):
     auto_discover_broker_symbols: bool = True
     dxy_symbol: str = "DXY"
 
-    @field_validator("symbols", "allowed_sessions", "crypto_symbols", mode="before")
+    @field_validator("symbols", "allowed_sessions", "crypto_symbols", "confirmation_timeframes", mode="before")
     @classmethod
     def parse_csv(cls, value):
         return _parse_csv(value)
@@ -172,9 +174,29 @@ class TradingSettings(BaseModel):
     def normalize_timeframe(cls, value: str) -> str:
         return value.upper()
 
+    @field_validator("confirmation_timeframes")
+    @classmethod
+    def normalize_confirmation_timeframes(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value or []:
+            timeframe = str(item).strip().upper()
+            if not timeframe or timeframe in seen:
+                continue
+            normalized.append(timeframe)
+            seen.add(timeframe)
+        return normalized
+
 
 class RiskSettings(BaseModel):
     risk_per_trade: float = 0.002  # 0.2%
+    adaptive_risk_enabled: bool = True
+    adaptive_risk_min: float = 0.002
+    adaptive_risk_max: float = 0.010
+    adaptive_risk_confidence_floor: float = 0.75
+    adaptive_risk_confidence_ceiling: float = 1.20
+    adaptive_risk_mtf_boost: float = 0.20
+    adaptive_risk_drawdown_floor: float = 0.50
     daily_drawdown_limit: float = 0.002  # 0.2% daily hard stop
     daily_equity_max_drawdown_pct: float = 0.002  # 0.2% equity high-watermark guard
     max_consecutive_losses: int = 1  # Stop after 1 consecutive loss
@@ -631,6 +653,17 @@ class Settings(BaseSettings):
         safe_symbol = "".join(char if char.isalnum() else "_" for char in symbol.upper())
         stamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%d")
         return self.data_dir / f"walk_forward_{safe_symbol}_{stamp}.json"
+
+    def trading_timeframes(self) -> list[str]:
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for timeframe in [self.trading.timeframe, *self.trading.confirmation_timeframes]:
+            normalized = str(timeframe).strip().upper()
+            if not normalized or normalized in seen:
+                continue
+            ordered.append(normalized)
+            seen.add(normalized)
+        return ordered
 
     def threshold_for(self, symbol: str, side: str) -> float:
         normalized_symbol = symbol.upper()

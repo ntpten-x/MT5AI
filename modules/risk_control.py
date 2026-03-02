@@ -290,8 +290,10 @@ class RiskManager:
         account: dict[str, Any],
         entry_price: float,
         stop_price: float,
+        risk_fraction: float | None = None,
     ) -> float:
-        risk_amount = float(account.get("equity", 0.0)) * self.settings.risk_per_trade_for(symbol)
+        fraction = float(risk_fraction) if risk_fraction is not None else self.settings.risk_per_trade_for(symbol)
+        risk_amount = float(account.get("equity", 0.0)) * fraction
         price_distance = abs(entry_price - stop_price)
         if risk_amount <= 0 or price_distance <= 0:
             return 0.0
@@ -313,6 +315,9 @@ class RiskManager:
         step = float(symbol_info.get("volume_step") or 0.01)
         minimum = float(symbol_info.get("volume_min") or step)
         maximum = float(symbol_info.get("volume_max") or raw_volume)
+
+        if raw_volume + 1e-12 < minimum:
+            return 0.0
 
         steps = math.floor(raw_volume / step)
         normalized = steps * step

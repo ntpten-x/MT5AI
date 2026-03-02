@@ -82,6 +82,38 @@ class ExecutionEngine:
             "type_filling": selected_filling_mode,
         }
 
+    def _position_size_below_minimum_message(
+        self,
+        signal: TradeSignal,
+        symbol_info: dict[str, Any],
+        account: dict[str, Any],
+        entry_price: float,
+        stop_price: float,
+        risk_fraction: float | None = None,
+    ) -> str:
+        applied_risk_fraction = (
+            float(risk_fraction)
+            if risk_fraction is not None
+            else float(signal.risk_fraction if signal.risk_fraction is not None else self.settings.risk_per_trade_for(signal.symbol))
+        )
+        risk_amount = float(account.get("equity", 0.0)) * applied_risk_fraction
+        price_distance = abs(entry_price - stop_price)
+        tick_size = float(symbol_info.get("trade_tick_size") or symbol_info.get("point") or 0.0)
+        tick_value = float(symbol_info.get("trade_tick_value") or 0.0)
+        money_per_lot = 0.0
+        if tick_size > 0 and tick_value > 0:
+            money_per_lot = (price_distance / tick_size) * tick_value
+        if money_per_lot <= 0:
+            contract_size = float(symbol_info.get("trade_contract_size") or 100_000.0)
+            money_per_lot = price_distance * contract_size
+        minimum_volume = float(symbol_info.get("volume_min") or symbol_info.get("volume_step") or 0.0)
+        minimum_risk_amount = money_per_lot * minimum_volume if money_per_lot > 0 and minimum_volume > 0 else 0.0
+        return (
+            f"Calculated volume below broker minimum for {signal.symbol} "
+            f"(risk_fraction={applied_risk_fraction:.4f}, risk_budget={risk_amount:.4f}, volume_min={minimum_volume:.2f}, "
+            f"min_risk_amount={minimum_risk_amount:.4f})"
+        )
+
     def execute(self, signal: TradeSignal, feature_frame: pd.DataFrame) -> ExecutionOutcome:
         if signal.side == "flat":
             return ExecutionOutcome(status="skipped", message="No tradable signal")
@@ -116,9 +148,41 @@ class ExecutionEngine:
         atr = float(feature_frame["atr_14"].iloc[-1])
         entry_price = tick["ask"] if signal.side == "long" else tick["bid"]
         sl, tp = self.risk_manager.build_levels(signal.symbol, signal.side, entry_price, atr, symbol_info)
-        volume = self.risk_manager.calculate_volume(signal.symbol, symbol_info, account, entry_price, sl)
+        applied_risk_fraction = (
+            float(signal.risk_fraction)
+            if signal.risk_fraction is not None
+            else self.settings.risk_per_trade_for(signal.symbol)
+        )
+        volume = self.risk_manager.calculate_volume(
+            signal.symbol,
+            symbol_info,
+            account,
+            entry_price,
+            sl,
+            risk_fraction=applied_risk_fraction,
+        )
         if volume <= 0:
-            return ExecutionOutcome(status="skipped", message="Calculated volume is zero")
+            message = self._position_size_below_minimum_message(
+                signal,
+                symbol_info,
+                account,
+                entry_price,
+                sl,
+                risk_fraction=applied_risk_fraction,
+            )
+            self.database.record_event(
+                "WARNING",
+                "position_size_below_minimum",
+                message,
+                {
+                    "symbol": signal.symbol,
+                    "entry_price": entry_price,
+                    "stop_price": sl,
+                    "equity": float(account.get("equity", 0.0)),
+                    "risk_per_trade": applied_risk_fraction,
+                },
+            )
+            return ExecutionOutcome(status="skipped", message=message)
 
         request = self._build_order_request(signal, symbol_info, tick, volume, sl, tp)
         synthetic_ticket = int(time.time() * 1000)

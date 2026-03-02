@@ -1,10 +1,12 @@
 {
-  "long_threshold": 0.51,
-  "short_threshold": 0.76,
-  "risk_per_trade": 0.004,
-  "atr_stop_loss_mult": 2.8,
-  "atr_take_profit_mult": 1.5,
-  "sequence_probability_weight": 0.6,
-  "objective": -13.68627424207147,
-  "updated_at": "2026-03-01T11:26:52.078224+00:00"
+  "long_threshold": 0.61,
+  "short_threshold": 0.79,
+  "risk_per_trade": 0.005,
+  "atr_stop_loss_mult": 2.6,
+  "atr_take_profit_mult": 2.0,
+  "lightgbm_probability_weight": 0.05,
+  "sequence_probability_weight": 0.0,
+  "transformer_probability_weight": 0.0,
+  "objective": -15.0,
+  "updated_at": "2026-03-02T06:03:55.142087+00:00"
 }

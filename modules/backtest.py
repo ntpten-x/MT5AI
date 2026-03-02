@@ -17,6 +17,21 @@ class BacktestEngine:
         self.settings = settings
         self.signal_engine = signal_engine
 
+    def _resolved_threshold(self, symbol: str, side: str, model: XGBoostSignalModel | None = None) -> float:
+        normalized_symbol = symbol.upper()
+        if side.lower() == "long":
+            explicit = self.settings.model.symbol_long_thresholds.get(normalized_symbol)
+        elif side.lower() == "short":
+            explicit = self.settings.model.symbol_short_thresholds.get(normalized_symbol)
+        else:
+            raise ValueError(f"Unsupported threshold side: {side}")
+        default = self.settings.threshold_for(symbol, side)
+        if explicit is not None:
+            return float(default)
+        if model is None:
+            return float(default)
+        return float(model.effective_threshold(default))
+
     def _require_vectorbt(self):
         try:
             import vectorbt as vbt
@@ -76,6 +91,7 @@ class BacktestEngine:
             exits=short_entries,
             short_entries=short_entries,
             short_exits=long_entries,
+            upon_opposite_entry="close",
             size=size,
             size_type=vbt.portfolio.enums.SizeType.Percent,
             fees=self.settings.execution.fee_bps / 10_000.0,
@@ -377,6 +393,7 @@ class BacktestEngine:
         self,
         symbol: str,
         market_frame: pd.DataFrame,
+        timeframe_context_frames: dict[str, pd.DataFrame] | None = None,
         long_model: XGBoostSignalModel | None = None,
         short_model: XGBoostSignalModel | None = None,
         lgbm_long_model: LightGBMSignalModel | None = None,
@@ -392,6 +409,7 @@ class BacktestEngine:
             edge_bps=self.settings.model.positive_return_bps,
             breakout_pct=self.settings.model.volatility_breakout_pct,
             symbol=symbol,
+            timeframe_context_frames=timeframe_context_frames,
         )
         if feature_frame.empty:
             raise ValueError("Not enough data for backtest")
@@ -404,12 +422,12 @@ class BacktestEngine:
         ):
             long_probabilities = long_model.predict_proba_frame(feature_frame)
             short_probabilities = short_model.predict_proba_frame(feature_frame)
-            long_threshold = long_model.effective_threshold(self.settings.threshold_for(symbol, "long"))
-            short_threshold = short_model.effective_threshold(self.settings.threshold_for(symbol, "short"))
+            long_threshold = self._resolved_threshold(symbol, "long", long_model)
+            short_threshold = self._resolved_threshold(symbol, "short", short_model)
         else:
             long_probabilities, short_probabilities = self._heuristic_probabilities(feature_frame)
-            long_threshold = self.settings.threshold_for(symbol, "long")
-            short_threshold = self.settings.threshold_for(symbol, "short")
+            long_threshold = self._resolved_threshold(symbol, "long")
+            short_threshold = self._resolved_threshold(symbol, "short")
         lightgbm_weight = self.settings.lightgbm_probability_weight_for(symbol)
         sequence_weight = self.settings.sequence_probability_weight_for(symbol)
         transformer_weight = self.settings.transformer_probability_weight_for(symbol)

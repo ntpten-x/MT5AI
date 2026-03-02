@@ -1,0 +1,394 @@
+{
+  "folds": [
+    {
+      "fold": 1,
+      "train_rows": 6162,
+      "calibration_rows": 1320,
+      "test_rows": 1496,
+      "market_regime": {
+        "label": "mixed",
+        "sideway_share": 0.3850267379679144,
+        "strong_trend_share": 0.13101604278074866,
+        "atr_pct_median": 0.0014626274269771127,
+        "ema_trend_strength_median": 0.4582885777743835
+      },
+      "train_summary": {
+        "long": {
+          "rows_train": 6162,
+          "positive_rate_train": 0.004057124310288867,
+          "calibration_method": "sigmoid",
+          "calibration_rows": 1320,
+          "brier_raw": 0.008971432741901991,
+          "brier_calibrated": 0.00900708370670472,
+          "log_loss_raw": 0.06020927145372466,
+          "log_loss_calibrated": 0.051717445028758975
+        },
+        "short": {
+          "rows_train": 6162,
+          "positive_rate_train": 0.009412528399870172,
+          "calibration_method": "sigmoid",
+          "calibration_rows": 1320,
+          "brier_raw": 0.017802020815626464,
+          "brier_calibrated": 0.017849242671405346,
+          "log_loss_raw": 0.11477129927938842,
+          "log_loss_calibrated": 0.0908205313856192
+        }
+      },
+      "threshold_tuning": {
+        "long_threshold": 0.61,
+        "short_threshold": 0.79,
+        "risk_per_trade": 0.005,
+        "atr_stop_loss_mult": 2.6,
+        "atr_take_profit_mult": 2.0,
+        "lightgbm_probability_weight": 0.05,
+        "sequence_probability_weight": 0.0,
+        "transformer_probability_weight": 0.0,
+        "objective": -15.0
+      },
+      "test_metrics": {
+        "long": {
+          "rows_eval": 1496,
+          "positive_rate_eval": 0.03609625668449198,
+          "threshold": 0.61,
+          "accuracy": 0.963903743315508,
+          "precision": 0.0,
+          "recall": 0.0,
+          "brier_score": 0.035522428402273265,
+          "log_loss": 0.17846281038422385,
+          "roc_auc": 0.7710869676889094
+        },
+        "short": {
+          "rows_eval": 1496,
+          "positive_rate_eval": 0.03676470588235294,
+          "threshold": 0.79,
+          "accuracy": 0.9632352941176471,
+          "precision": 0.0,
+          "recall": 0.0,
+          "brier_score": 0.035755028137334076,
+          "log_loss": 0.1649114942655328,
+          "roc_auc": 0.6987697937038673
+        }
+      },
+      "backtest": {
+        "Total Return [%]": 0.0,
+        "Win Rate [%]": null,
+        "Sharpe Ratio": Infinity,
+        "Max Drawdown [%]": null
+      }
+    },
+    {
+      "fold": 2,
+      "train_rows": 7394,
+      "calibration_rows": 1584,
+      "test_rows": 1496,
+      "market_regime": {
+        "label": "mixed",
+        "sideway_share": 0.393048128342246,
+        "strong_trend_share": 0.06684491978609626,
+        "atr_pct_median": 0.004049738450377078,
+        "ema_trend_strength_median": 0.4555268632263256
+      },
+      "train_summary": {
+        "long": {
+          "rows_train": 7394,
+          "positive_rate_train": 0.004868812550716798,
+          "calibration_method": "isotonic",
+          "calibration_rows": 1584,
+          "brier_raw": 0.03412068684970325,
+          "brier_calibrated": 0.030896956294768085,
+          "log_loss_raw": 0.23287756027815146,
+          "log_loss_calibrated": 0.12706516979212973
+        },
+        "short": {
+          "rows_train": 7394,
+          "positive_rate_train": 0.009872869894509062,
+          "calibration_method": "isotonic",
+          "calibration_rows": 1584,
+          "brier_raw": 0.04621443285244358,
+          "brier_calibrated": 0.038332815422711726,
+          "log_loss_raw": 0.1964326829794143,
+          "log_loss_calibrated": 0.16279026065076335
+        }
+      },
+      "threshold_tuning": {
+        "long_threshold": 0.61,
+        "short_threshold": 0.79,
+        "risk_per_trade": 0.005,
+        "atr_stop_loss_mult": 2.6,
+        "atr_take_profit_mult": 2.0,
+        "lightgbm_probability_weight": 0.05,
+        "sequence_probability_weight": 0.0,
+        "transformer_probability_weight": 0.0,
+        "objective": -15.0
+      },
+      "test_metrics": {
+        "long": {
+          "rows_eval": 1496,
+          "positive_rate_eval": 0.22794117647058823,
+          "threshold": 0.61,
+          "accuracy": 0.7720588235294118,
+          "precision": 0.0,
+          "recall": 0.0,
+          "brier_score": 0.1922197709332775,
+          "log_loss": 0.6809161739808544,
+          "roc_auc": 0.522920871894479
+        },
+        "short": {
+          "rows_eval": 1496,
+          "positive_rate_eval": 0.2934491978609626,
+          "threshold": 0.79,
+          "accuracy": 0.7065508021390374,
+          "precision": 0.0,
+          "recall": 0.0,
+          "brier_score": 0.26828817343794675,
+          "log_loss": 0.9642118074423531,
+          "roc_auc": 0.5872726136419961
+        }
+      },
+      "backtest": {
+        "Total Return [%]": 0.0,
+        "Win Rate [%]": null,
+        "Sharpe Ratio": Infinity,
+        "Max Drawdown [%]": null
+      }
+    },
+    {
+      "fold": 3,
+      "train_rows": 8626,
+      "calibration_rows": 1848,
+      "test_rows": 1496,
+      "market_regime": {
+        "label": "mixed",
+        "sideway_share": 0.4405080213903743,
+        "strong_trend_share": 0.047459893048128345,
+        "atr_pct_median": 0.0016373117032671314,
+        "ema_trend_strength_median": 0.4000956805167043
+      },
+      "train_summary": {
+        "long": {
+          "rows_train": 8626,
+          "positive_rate_train": 0.006955715279387897,
+          "calibration_method": "isotonic",
+          "calibration_rows": 1848,
+          "brier_raw": 0.19288891936523014,
+          "brier_calibrated": 0.15253301442940978,
+          "log_loss_raw": 1.079287412342297,
+          "log_loss_calibrated": 0.47874145047938316
+        },
+        "short": {
+          "rows_train": 8626,
+          "positive_rate_train": 0.012404358914908417,
+          "calibration_method": "isotonic",
+          "calibration_rows": 1848,
+          "brier_raw": 0.22941322469044917,
+          "brier_calibrated": 0.17138530284053655,
+          "log_loss_raw": 1.041545157605344,
+          "log_loss_calibrated": 0.5213705687104457
+        }
+      },
+      "threshold_tuning": {
+        "long_threshold": 0.8,
+        "short_threshold": 0.65,
+        "risk_per_trade": 0.006,
+        "atr_stop_loss_mult": 1.2,
+        "atr_take_profit_mult": 3.9000000000000004,
+        "lightgbm_probability_weight": 0.0,
+        "sequence_probability_weight": 0.0,
+        "transformer_probability_weight": 0.0,
+        "objective": 11.664655466628467
+      },
+      "test_metrics": {
+        "long": {
+          "rows_eval": 1496,
+          "positive_rate_eval": 0.038101604278074866,
+          "threshold": 0.8,
+          "accuracy": 0.9612299465240641,
+          "precision": 0.0,
+          "recall": 0.0,
+          "brier_score": 0.06534123867474216,
+          "log_loss": 0.2800732440184541,
+          "roc_auc": 0.5857564341709034
+        },
+        "short": {
+          "rows_eval": 1496,
+          "positive_rate_eval": 0.05080213903743316,
+          "threshold": 0.65,
+          "accuracy": 0.9391711229946524,
+          "precision": 0.3170731707317073,
+          "recall": 0.17105263157894737,
+          "brier_score": 0.08082704331527837,
+          "log_loss": 0.3049362032212924,
+          "roc_auc": 0.7090854336545588
+        }
+      },
+      "backtest": {
+        "Total Return [%]": 0.3656323929173908,
+        "Win Rate [%]": 25.0,
+        "Sharpe Ratio": 1.238400125034001,
+        "Max Drawdown [%]": 1.428917918384091
+      }
+    },
+    {
+      "fold": 4,
+      "train_rows": 9858,
+      "calibration_rows": 2112,
+      "test_rows": 1496,
+      "market_regime": {
+        "label": "mixed",
+        "sideway_share": 0.34358288770053474,
+        "strong_trend_share": 0.0962566844919786,
+        "atr_pct_median": 0.0011132408657752789,
+        "ema_trend_strength_median": 0.48447919605274437
+      },
+      "train_summary": {
+        "long": {
+          "rows_train": 9858,
+          "positive_rate_train": 0.03621424223980523,
+          "calibration_method": "isotonic",
+          "calibration_rows": 2112,
+          "brier_raw": 0.0712229908149599,
+          "brier_calibrated": 0.05449669112382196,
+          "log_loss_raw": 0.2705601296747815,
+          "log_loss_calibrated": 0.21449357289692683
+        },
+        "short": {
+          "rows_train": 9858,
+          "positive_rate_train": 0.04737269222966119,
+          "calibration_method": "isotonic",
+          "calibration_rows": 2112,
+          "brier_raw": 0.07271653574537541,
+          "brier_calibrated": 0.0680793958290102,
+          "log_loss_raw": 0.249284806535337,
+          "log_loss_calibrated": 0.23634191518804026
+        }
+      },
+      "threshold_tuning": {
+        "long_threshold": 0.79,
+        "short_threshold": 0.61,
+        "risk_per_trade": 0.006,
+        "atr_stop_loss_mult": 3.0,
+        "atr_take_profit_mult": 2.2,
+        "lightgbm_probability_weight": 0.2,
+        "sequence_probability_weight": 0.0,
+        "transformer_probability_weight": 0.0,
+        "objective": 7.733366846240985
+      },
+      "test_metrics": {
+        "long": {
+          "rows_eval": 1496,
+          "positive_rate_eval": 0.008689839572192513,
+          "threshold": 0.79,
+          "accuracy": 0.9913101604278075,
+          "precision": 0.0,
+          "recall": 0.0,
+          "brier_score": 0.009879926491497269,
+          "log_loss": 0.0680272079259206,
+          "roc_auc": 0.6118833964417242
+        },
+        "short": {
+          "rows_eval": 1496,
+          "positive_rate_eval": 0.019385026737967916,
+          "threshold": 0.61,
+          "accuracy": 0.9806149732620321,
+          "precision": 0.0,
+          "recall": 0.0,
+          "brier_score": 0.019188093602063843,
+          "log_loss": 0.08013543068638095,
+          "roc_auc": 0.8464024633899818
+        }
+      },
+      "backtest": {
+        "Total Return [%]": 0.0,
+        "Win Rate [%]": null,
+        "Sharpe Ratio": Infinity,
+        "Max Drawdown [%]": null
+      }
+    },
+    {
+      "fold": 5,
+      "train_rows": 11090,
+      "calibration_rows": 2376,
+      "test_rows": 1496,
+      "market_regime": {
+        "label": "mixed",
+        "sideway_share": 0.4070855614973262,
+        "strong_trend_share": 0.060828877005347594,
+        "atr_pct_median": 0.0011323955636216936,
+        "ema_trend_strength_median": 0.4387440034529765
+      },
+      "train_summary": {
+        "long": {
+          "rows_train": 11090,
+          "positive_rate_train": 0.042741208295761945,
+          "calibration_method": "sigmoid",
+          "calibration_rows": 2376,
+          "brier_raw": 0.011542906072170777,
+          "brier_calibrated": 0.010970789974458352,
+          "log_loss_raw": 0.06174987243561406,
+          "log_loss_calibrated": 0.056976694768618615
+        },
+        "short": {
+          "rows_train": 11090,
+          "positive_rate_train": 0.05563570784490532,
+          "calibration_method": "isotonic",
+          "calibration_rows": 2376,
+          "brier_raw": 0.029239456187701813,
+          "brier_calibrated": 0.023403943048657613,
+          "log_loss_raw": 0.11093698121371787,
+          "log_loss_calibrated": 0.09339765365857149
+        }
+      },
+      "threshold_tuning": {
+        "long_threshold": 0.61,
+        "short_threshold": 0.79,
+        "risk_per_trade": 0.005,
+        "atr_stop_loss_mult": 2.6,
+        "atr_take_profit_mult": 2.0,
+        "lightgbm_probability_weight": 0.05,
+        "sequence_probability_weight": 0.0,
+        "transformer_probability_weight": 0.0,
+        "objective": -15.0
+      },
+      "test_metrics": {
+        "long": {
+          "rows_eval": 1496,
+          "positive_rate_eval": 0.01270053475935829,
+          "threshold": 0.61,
+          "accuracy": 0.9872994652406417,
+          "precision": 0.0,
+          "recall": 0.0,
+          "brier_score": 0.0123711205963633,
+          "log_loss": 0.06417184612713431,
+          "roc_auc": 0.8257848412500445
+        },
+        "short": {
+          "rows_eval": 1496,
+          "positive_rate_eval": 0.02072192513368984,
+          "threshold": 0.79,
+          "accuracy": 0.9792780748663101,
+          "precision": 0.0,
+          "recall": 0.0,
+          "brier_score": 0.01957734323330384,
+          "log_loss": 0.08867743533199733,
+          "roc_auc": 0.7966090498733899
+        }
+      },
+      "backtest": {
+        "Total Return [%]": 0.0,
+        "Win Rate [%]": null,
+        "Sharpe Ratio": Infinity,
+        "Max Drawdown [%]": null
+      }
+    }
+  ],
+  "summary": {
+    "fold_count": 5,
+    "mean_accuracy": 0.9244652406417112,
+    "mean_roc_auc": 0.6955571865709854,
+    "regime_counts": {
+      "mixed": 5
+    },
+    "regime_coverage_ok": false
+  },
+  "symbol": "GOLD"
+}

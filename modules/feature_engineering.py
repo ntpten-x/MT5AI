@@ -58,6 +58,14 @@ BASE_FEATURE_COLUMNS = [
     "session_london",
     "session_new_york",
     "session_overlap",
+    "mtf_context_count",
+    "mtf_bias_mean",
+    "mtf_alignment_score",
+    "mtf_conflict_score",
+    "mtf_rsi_mean",
+    "mtf_trend_strength_mean",
+    "mtf_trend_strength_max",
+    "mtf_atr_pct_mean",
 ]
 
 CANDIDATE_FEATURE_COLUMNS = [
@@ -155,11 +163,92 @@ def _aligned_series_by_time(base_time: pd.Series, reference: pd.DataFrame, colum
     return pd.Series(aligned.to_numpy(), index=base_time.index)
 
 
+def _neutral_mtf_context(index: pd.Index) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "mtf_context_count": pd.Series(0.0, index=index),
+            "mtf_bias_mean": pd.Series(0.0, index=index),
+            "mtf_alignment_score": pd.Series(0.0, index=index),
+            "mtf_conflict_score": pd.Series(0.0, index=index),
+            "mtf_rsi_mean": pd.Series(50.0, index=index),
+            "mtf_trend_strength_mean": pd.Series(0.0, index=index),
+            "mtf_trend_strength_max": pd.Series(0.0, index=index),
+            "mtf_atr_pct_mean": pd.Series(0.0, index=index),
+        }
+    )
+
+
+def _mtf_bias_frame(context_features: pd.DataFrame) -> pd.Series:
+    ema_component = np.tanh(context_features["ema_gap_pct"].fillna(0.0) * 400.0)
+    rsi_component = ((context_features["rsi_14"].fillna(50.0) - 50.0) / 50.0).clip(-1.0, 1.0)
+    trend_component = np.tanh(context_features["ema_trend_strength"].fillna(0.0))
+    return ((0.5 * ema_component) + (0.3 * rsi_component) + (0.2 * trend_component)).clip(-1.0, 1.0)
+
+
+def _build_mtf_context_frame(
+    base_time: pd.Series,
+    symbol: str | None = None,
+    reference_frames: dict[str, pd.DataFrame] | None = None,
+    funding_rate: float | None = None,
+    timeframe_context_frames: dict[str, pd.DataFrame] | None = None,
+) -> pd.DataFrame:
+    if not timeframe_context_frames:
+        return _neutral_mtf_context(base_time.index)
+
+    bias_columns: list[pd.Series] = []
+    rsi_columns: list[pd.Series] = []
+    trend_columns: list[pd.Series] = []
+    atr_columns: list[pd.Series] = []
+    for timeframe, context_frame in timeframe_context_frames.items():
+        if context_frame is None or context_frame.empty:
+            continue
+        context_features = build_feature_frame(
+            context_frame,
+            symbol=symbol,
+            reference_frames=reference_frames,
+            funding_rate=funding_rate,
+            timeframe_context_frames=None,
+        ).copy()
+        context_features["_mtf_bias"] = _mtf_bias_frame(context_features)
+        suffix = str(timeframe).strip().upper()
+        bias_columns.append(_aligned_series_by_time(base_time, context_features, "_mtf_bias").rename(f"bias_{suffix}"))
+        rsi_columns.append(_aligned_series_by_time(base_time, context_features, "rsi_14").rename(f"rsi_{suffix}"))
+        trend_columns.append(
+            _aligned_series_by_time(base_time, context_features, "ema_trend_strength").rename(f"trend_{suffix}")
+        )
+        atr_columns.append(_aligned_series_by_time(base_time, context_features, "atr_pct").rename(f"atrpct_{suffix}"))
+
+    if not bias_columns:
+        return _neutral_mtf_context(base_time.index)
+
+    bias_frame = pd.concat(bias_columns, axis=1)
+    rsi_frame = pd.concat(rsi_columns, axis=1)
+    trend_frame = pd.concat(trend_columns, axis=1)
+    atr_frame = pd.concat(atr_columns, axis=1)
+    sign_frame = np.sign(bias_frame.fillna(0.0))
+    context_count = bias_frame.notna().sum(axis=1).astype(float)
+    alignment_score = sign_frame.mean(axis=1).fillna(0.0)
+    conflict_score = (1.0 - alignment_score.abs()).clip(lower=0.0, upper=1.0)
+    return pd.DataFrame(
+        {
+            "mtf_context_count": context_count,
+            "mtf_bias_mean": bias_frame.mean(axis=1).fillna(0.0),
+            "mtf_alignment_score": alignment_score,
+            "mtf_conflict_score": conflict_score,
+            "mtf_rsi_mean": rsi_frame.mean(axis=1).fillna(50.0),
+            "mtf_trend_strength_mean": trend_frame.abs().mean(axis=1).fillna(0.0),
+            "mtf_trend_strength_max": trend_frame.abs().max(axis=1).fillna(0.0),
+            "mtf_atr_pct_mean": atr_frame.mean(axis=1).fillna(0.0),
+        }
+    )
+
+
 def build_feature_frame(
     frame: pd.DataFrame,
     symbol: str | None = None,
     reference_frames: dict[str, pd.DataFrame] | None = None,
     funding_rate: float | None = None,
+    timeframe_context_frames: dict[str, pd.DataFrame] | None = None,
 ) -> pd.DataFrame:
     data = _ensure_time_column(frame)
     data = data.sort_values("time").reset_index(drop=True)
@@ -312,6 +401,16 @@ def build_feature_frame(
             btc_returns = pd.Series(np.nan, index=data.index)
         data["btc_dxy_corr_48"] = btc_returns.rolling(48).corr(dxy_returns)
 
+    mtf_context = _build_mtf_context_frame(
+        data["time"],
+        symbol=symbol,
+        reference_frames=reference_frames,
+        funding_rate=funding_rate,
+        timeframe_context_frames=timeframe_context_frames,
+    )
+    for column in mtf_context.columns:
+        data[column] = mtf_context[column].to_numpy()
+
     data.replace([np.inf, -np.inf], np.nan, inplace=True)
     data.drop(columns=["bb_upper", "bb_lower"], inplace=True, errors="ignore")
     return data
@@ -325,12 +424,14 @@ def build_supervised_frame(
     symbol: str | None = None,
     reference_frames: dict[str, pd.DataFrame] | None = None,
     funding_rate: float | None = None,
+    timeframe_context_frames: dict[str, pd.DataFrame] | None = None,
 ) -> pd.DataFrame:
     features = build_feature_frame(
         frame,
         symbol=symbol,
         reference_frames=reference_frames,
         funding_rate=funding_rate,
+        timeframe_context_frames=timeframe_context_frames,
     )
     features["future_return"] = features["close"].shift(-horizon) / features["close"] - 1.0
     features["target_long"] = 0
@@ -358,6 +459,7 @@ def build_training_frame(
     symbol: str | None = None,
     reference_frames: dict[str, pd.DataFrame] | None = None,
     funding_rate: float | None = None,
+    timeframe_context_frames: dict[str, pd.DataFrame] | None = None,
 ) -> pd.DataFrame:
     features = build_supervised_frame(
         frame,
@@ -367,6 +469,7 @@ def build_training_frame(
         symbol=symbol,
         reference_frames=reference_frames,
         funding_rate=funding_rate,
+        timeframe_context_frames=timeframe_context_frames,
     )
     side = target_side.lower()
     if side == "long":

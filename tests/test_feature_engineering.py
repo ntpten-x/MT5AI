@@ -32,10 +32,45 @@ def _sample_market_frame(rows: int = 200) -> pd.DataFrame:
     )
 
 
+def _sample_context_frame(rows: int = 80, freq: str = "15min", drift: float = 0.0015) -> pd.DataFrame:
+    rng = np.random.default_rng(7)
+    close = 2500.0 + np.cumsum(rng.normal(drift, 0.8, size=rows))
+    open_ = close + rng.normal(0, 0.3, size=rows)
+    high = np.maximum(open_, close) + rng.uniform(0.2, 0.9, size=rows)
+    low = np.minimum(open_, close) - rng.uniform(0.2, 0.9, size=rows)
+    return pd.DataFrame(
+        {
+            "time": pd.date_range("2025-01-01", periods=rows, freq=freq, tz="UTC"),
+            "open": open_,
+            "high": high,
+            "low": low,
+            "close": close,
+            "tick_volume": rng.integers(100, 1000, size=rows),
+            "spread": rng.integers(20, 60, size=rows),
+            "real_volume": rng.integers(0, 10, size=rows),
+        }
+    )
+
+
 def test_build_feature_frame_contains_expected_columns():
     frame = build_feature_frame(_sample_market_frame())
     for column in FEATURE_COLUMNS:
         assert column in frame.columns
+
+
+def test_build_feature_frame_adds_multi_timeframe_context_features():
+    frame = _sample_market_frame()
+    context_frames = {
+        "M15": _sample_context_frame(rows=90, freq="15min", drift=0.8),
+        "H1": _sample_context_frame(rows=40, freq="1h", drift=1.2),
+    }
+
+    features = build_feature_frame(frame, symbol="GOLD", timeframe_context_frames=context_frames)
+
+    assert "mtf_alignment_score" in features.columns
+    assert "mtf_rsi_mean" in features.columns
+    assert features["mtf_context_count"].iloc[-1] >= 1.0
+    assert abs(float(features["mtf_alignment_score"].iloc[-1])) <= 1.0
 
 
 def test_build_training_frame_generates_target_column():

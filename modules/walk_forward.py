@@ -151,13 +151,19 @@ class WalkForwardEngine:
         profile["walk_forward_selected_objective_median"] = float(median(objective_values))
         return profile
 
-    def run(self, symbol: str, market_frame: pd.DataFrame) -> dict[str, Any]:
+    def run(
+        self,
+        symbol: str,
+        market_frame: pd.DataFrame,
+        timeframe_context_frames: dict[str, pd.DataFrame] | None = None,
+    ) -> dict[str, Any]:
         training_frame = build_supervised_frame(
             market_frame,
             horizon=self.settings.model.positive_return_horizon,
             edge_bps=self.settings.model.positive_return_bps,
             breakout_pct=self.settings.model.volatility_breakout_pct,
             symbol=symbol,
+            timeframe_context_frames=timeframe_context_frames,
         )
         total_rows = len(training_frame)
         if total_rows < self.settings.model.training_min_rows:

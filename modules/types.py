@@ -18,6 +18,8 @@ class TradeSignal:
     generated_at: datetime
     chronos_direction: float | None = None
     features: dict[str, float] = field(default_factory=dict)
+    risk_fraction: float | None = None
+    context: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
