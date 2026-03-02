@@ -20,6 +20,8 @@ def build_parser() -> argparse.ArgumentParser:
     collect_parser = subparsers.add_parser("collect", help="Collect the latest bars from MT5")
     collect_parser.add_argument("--symbol", required=False)
     subparsers.add_parser("heartbeat", help="Check MT5 connectivity and snapshot equity")
+    subparsers.add_parser("kill-switch-status", help="Inspect persisted kill-switch state")
+    subparsers.add_parser("reset-kill-switch", help="Reset persisted kill-switch state")
     inspect_parser = subparsers.add_parser("check-symbols", help="Inspect broker symbols for the active universe")
     inspect_parser.add_argument("--symbol", action="append", required=False)
     subparsers.add_parser("refresh-models", help="Backfill and retrain models for all active symbols")
@@ -73,6 +75,16 @@ def main() -> int:
 
         if args.command == "heartbeat":
             state = service.heartbeat()
+            print(json.dumps(state, indent=2, default=str))
+            return 0
+
+        if args.command == "kill-switch-status":
+            state = service.kill_switch_status()
+            print(json.dumps(state, indent=2, default=str))
+            return 0
+
+        if args.command == "reset-kill-switch":
+            state = service.reset_kill_switch()
             print(json.dumps(state, indent=2, default=str))
             return 0
 

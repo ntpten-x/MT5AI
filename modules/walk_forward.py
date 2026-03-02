@@ -55,6 +55,33 @@ class WalkForwardEngine:
         value = fold.get("threshold_tuning", {}).get("objective")
         return float(value) if value is not None else 0.0
 
+    def _regime_snapshot(self, frame: pd.DataFrame) -> dict[str, Any]:
+        if frame.empty:
+            return {
+                "label": "unknown",
+                "sideway_share": 0.0,
+                "strong_trend_share": 0.0,
+                "atr_pct_median": 0.0,
+                "ema_trend_strength_median": 0.0,
+            }
+        trend_strength = frame.get("ema_trend_strength", pd.Series(0.0, index=frame.index)).fillna(0.0).abs()
+        atr_pct = frame.get("atr_pct", pd.Series(0.0, index=frame.index)).fillna(0.0)
+        sideway_share = float((trend_strength <= 0.35).mean())
+        strong_trend_share = float((trend_strength >= 1.25).mean())
+        if strong_trend_share >= 0.35:
+            label = "strong_trend"
+        elif sideway_share >= 0.50:
+            label = "sideway"
+        else:
+            label = "mixed"
+        return {
+            "label": label,
+            "sideway_share": sideway_share,
+            "strong_trend_share": strong_trend_share,
+            "atr_pct_median": float(atr_pct.median()),
+            "ema_trend_strength_median": float(trend_strength.median()),
+        }
+
     def recommend_profile(self, symbol: str, report: dict[str, Any]) -> dict[str, Any]:
         folds = list(report.get("folds") or [])
         min_positive_return_folds = max(1, int(self.settings.model.walk_forward_min_positive_return_folds))
@@ -77,6 +104,21 @@ class WalkForwardEngine:
             "walk_forward_mean_accuracy": report.get("summary", {}).get("mean_accuracy"),
             "walk_forward_mean_roc_auc": report.get("summary", {}).get("mean_roc_auc"),
         }
+        regime_counts = report.get("summary", {}).get("regime_counts")
+        if isinstance(regime_counts, dict):
+            covered = {str(name) for name, count in regime_counts.items() if int(count or 0) > 0}
+            missing_required_regimes = sorted({"sideway", "strong_trend"} - covered)
+            profile["walk_forward_regime_counts"] = regime_counts
+            profile["walk_forward_required_regimes"] = ["sideway", "strong_trend"]
+            profile["walk_forward_missing_regimes"] = missing_required_regimes
+            profile["walk_forward_regime_coverage_ok"] = not missing_required_regimes
+            if missing_required_regimes:
+                profile["profile_accepted"] = False
+                profile["profile_source"] = "walk_forward_rejected"
+                profile["rejection_reason"] = (
+                    "Missing required market regimes: " + ",".join(missing_required_regimes)
+                )
+                return profile
         if not accepted:
             profile["rejection_reason"] = (
                 f"Only {len(positive_return_folds)} positive-return folds "
@@ -402,6 +444,7 @@ class WalkForwardEngine:
                     "train_rows": int(len(train)),
                     "calibration_rows": int(len(calibration)),
                     "test_rows": int(len(test)),
+                    "market_regime": self._regime_snapshot(test),
                     "train_summary": {
                         "long": {
                             "rows_train": int(len(long_train)),
@@ -437,7 +480,10 @@ class WalkForwardEngine:
 
         auc_values = []
         accuracy_values = []
+        regime_counts: dict[str, int] = {}
         for fold in folds:
+            regime_name = str(fold.get("market_regime", {}).get("label", "unknown"))
+            regime_counts[regime_name] = regime_counts.get(regime_name, 0) + 1
             for side in ("long", "short"):
                 metrics = fold["test_metrics"][side]
                 accuracy_values.append(metrics["accuracy"])
@@ -449,5 +495,9 @@ class WalkForwardEngine:
                 "fold_count": len(folds),
                 "mean_accuracy": float(np.mean(accuracy_values)) if accuracy_values else None,
                 "mean_roc_auc": float(np.mean(auc_values)) if auc_values else None,
+                "regime_counts": regime_counts,
+                "regime_coverage_ok": (
+                    regime_counts.get("sideway", 0) > 0 and regime_counts.get("strong_trend", 0) > 0
+                ),
             },
         }

@@ -513,6 +513,7 @@ class BotSettings(BaseModel):
     model_refresh_hour_utc: int = 0
     model_refresh_minute_utc: int = 10
     run_lock_path: str = "data/run-live.lock"
+    kill_switch_path: str = "data/kill_switch_state.json"
 
 
 class Settings(BaseSettings):
@@ -565,6 +566,10 @@ class Settings(BaseSettings):
     @property
     def run_lock_path(self) -> Path:
         return self.resolve_path(self.bot.run_lock_path)
+
+    @property
+    def kill_switch_path(self) -> Path:
+        return self.resolve_path(self.bot.kill_switch_path)
 
     @property
     def xgb_artifact_path(self) -> Path:

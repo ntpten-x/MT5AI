@@ -69,6 +69,26 @@ class TradingBotService:
     def init_database(self) -> None:
         self.database.initialize()
 
+    def reset_kill_switch(self) -> dict[str, Any]:
+        previous = self.risk_manager.kill_switch_status()
+        self.risk_manager.reset_kill_switch()
+        payload = {
+            "status": "reset",
+            "kill_switch_was_active": previous is not None,
+            "previous": previous,
+        }
+        self.database.record_event("INFO", "kill_switch_reset", "Kill switch reset via CLI", payload)
+        self.notifier.send_warning("Kill switch reset via CLI")
+        return payload
+
+    def kill_switch_status(self) -> dict[str, Any]:
+        payload = self.risk_manager.kill_switch_status()
+        return {
+            "active": payload is not None,
+            "kill_switch": payload,
+            "path": str(self.settings.kill_switch_path),
+        }
+
     def connect(self) -> bool:
         return self.bridge.connect()
 
@@ -84,10 +104,12 @@ class TradingBotService:
         if not heartbeat_state.ok:
             reason = f"Watchdog halted: MT5 connection unavailable ({heartbeat_state.message})"
             self.database.record_event("ERROR", "watchdog_mt5", reason)
+            self.notifier.send_critical(reason)
             raise RuntimeError(reason)
         if not self.news_filter.internet_available():
             reason = "Watchdog halted: internet/news endpoint unavailable"
             self.database.record_event("ERROR", "watchdog_network", reason)
+            self.notifier.send_critical(reason)
             raise RuntimeError(reason)
 
     def _reference_frames(self) -> dict[str, Any]:
@@ -410,7 +432,10 @@ class TradingBotService:
 
         if self._last_heartbeat_ok is not None and self._last_heartbeat_ok != state.ok:
             status_text = "restored" if state.ok else "lost"
-            self.notifier.send(f"MT5 connectivity {status_text}: {state.message}")
+            if state.ok:
+                self.notifier.send_info(f"MT5 connectivity {status_text}: {state.message}")
+            else:
+                self.notifier.send_error(f"MT5 connectivity {status_text}: {state.message}")
         self._last_heartbeat_ok = state.ok
         return asdict(state)
 
@@ -435,10 +460,11 @@ class TradingBotService:
             except Exception as exc:
                 logger.exception("Model refresh failed for {}", symbol)
                 self.database.record_event("ERROR", "model_refresh_failed", str(exc), {"symbol": symbol})
+                self.notifier.send_error(f"Model refresh failed for {symbol}: {exc}")
                 model_summary[symbol] = {"status": "failed", "reason": str(exc)}
                 spread_summary[symbol] = spread_summary.get(symbol) or {"status": "failed", "reason": str(exc)}
         summary = {"data": data_summary, "spread_profiles": spread_summary, "models": model_summary}
-        self.notifier.send(f"MT5AI model refresh completed for {','.join(self._symbols())}")
+        self.notifier.send_info(f"MT5AI model refresh completed for {','.join(self._symbols())}")
         return summary
 
     def inspect_broker_symbols(self, symbols: list[str] | None = None) -> dict[str, Any]:
@@ -654,35 +680,21 @@ class TradingBotService:
         if account is None:
             raise RuntimeError("Unable to retrieve account info")
 
-        halted, drawdown = self.risk_manager.daily_drawdown_exceeded(account)
-        if halted:
-            reason = f"Daily drawdown guard tripped at {drawdown:.2%}"
+        kill_switch_halted, kill_switch = self.risk_manager.evaluate_kill_switch(account)
+        if kill_switch_halted and kill_switch is not None:
+            reason = str(kill_switch["reason"])
             logger.error(reason)
-            self.database.record_event("ERROR", "equity_guard", reason)
-            if self.settings.execution.close_all_on_guard_trip:
-                self.execution_engine.close_all_positions(reason)
-            self.notifier.send(reason)
-            return [{"status": "halted", "reason": reason}]
-
-        equity_halted, equity_drawdown = self.risk_manager.equity_high_watermark_exceeded(account)
-        if equity_halted:
-            reason = f"Equity high-watermark guard tripped at {equity_drawdown:.2%}"
-            logger.error(reason)
-            self.database.record_event("ERROR", "equity_high_watermark_guard", reason)
-            if self.settings.execution.close_all_on_guard_trip:
-                self.execution_engine.close_all_positions(reason)
-            self.notifier.send(reason)
-            return [{"status": "halted", "reason": reason}]
-
-        loss_halted, consecutive_losses = self.risk_manager.consecutive_losses_exceeded()
-        if loss_halted:
-            reason = f"Consecutive loss guard tripped: {consecutive_losses} losses"
-            logger.error(reason)
-            self.database.record_event("ERROR", "consecutive_loss_guard", reason)
-            if self.settings.execution.close_all_on_guard_trip:
-                self.execution_engine.close_all_positions(reason)
-            self.notifier.send(reason)
-            return [{"status": "halted", "reason": reason}]
+            if kill_switch.get("newly_tripped", False):
+                self.database.record_event(
+                    "ERROR",
+                    str(kill_switch["event_code"]),
+                    reason,
+                    kill_switch,
+                )
+                if self.settings.execution.close_all_on_guard_trip:
+                    self.execution_engine.close_all_positions(reason)
+                self.notifier.send_critical(reason)
+            return [{"status": "halted", "reason": reason, "kill_switch": kill_switch}]
 
         reference_frames = self._reference_frames()
         results: list[dict[str, Any]] = []
@@ -936,7 +948,7 @@ class TradingBotService:
             except Exception as exc:
                 logger.exception("Cycle failed for {}", symbol)
                 self.database.record_event("ERROR", "cycle_failure", str(exc), {"symbol": symbol})
-                self.notifier.send(f"MT5AI cycle failed for {symbol}: {exc}")
+                self.notifier.send_error(f"MT5AI cycle failed for {symbol}: {exc}")
                 results.append({"symbol": symbol, "status": "failed", "reason": str(exc)})
         return results
 
@@ -987,12 +999,15 @@ class TradingBotService:
                 self.settings.trading.timeframe,
                 ",".join(self.settings.trading.symbols),
             )
-            self.notifier.send(
+            self.notifier.send_info(
                 f"MT5AI run-live started for {','.join(self.settings.trading.symbols)} on "
                 f"{self.settings.trading.timeframe}"
             )
             scheduler.start()
         except (KeyboardInterrupt, SystemExit):
             logger.info("Scheduler stopped")
+        except Exception as exc:
+            self.notifier.send_critical(f"MT5AI run-live stopped unexpectedly: {exc}")
+            raise
         finally:
             self._run_lock.release()

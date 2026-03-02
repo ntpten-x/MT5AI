@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import math
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -8,10 +10,58 @@ from config import Settings
 from modules.db import Database
 
 
+@dataclass
+class KillSwitchState:
+    active: bool
+    event_code: str
+    reason: str
+    metric_name: str
+    metric_value: float
+    threshold: float
+    tripped_at: str
+
+
 class RiskManager:
     def __init__(self, settings: Settings, database: Database):
         self.settings = settings
         self.database = database
+        self._kill_switch: KillSwitchState | None = None
+        self._load_kill_switch()
+
+    def _persist_kill_switch(self) -> None:
+        path = self.settings.kill_switch_path
+        if self._kill_switch is None:
+            if path.exists():
+                path.unlink(missing_ok=True)
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(asdict(self._kill_switch), ensure_ascii=True, indent=2), encoding="utf-8")
+
+    def _load_kill_switch(self) -> None:
+        path = self.settings.kill_switch_path
+        if not path.exists():
+            self._kill_switch = None
+            return
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            self._kill_switch = None
+            return
+        if not isinstance(payload, dict):
+            self._kill_switch = None
+            return
+        try:
+            self._kill_switch = KillSwitchState(
+                active=bool(payload.get("active", True)),
+                event_code=str(payload.get("event_code", "kill_switch_unknown")),
+                reason=str(payload.get("reason", "Kill switch is active")),
+                metric_name=str(payload.get("metric_name", "unknown")),
+                metric_value=float(payload.get("metric_value", 0.0)),
+                threshold=float(payload.get("threshold", 0.0)),
+                tripped_at=str(payload.get("tripped_at", "")),
+            )
+        except Exception:
+            self._kill_switch = None
 
     def record_account_snapshot(self, account: dict[str, Any]) -> None:
         self.database.record_equity_snapshot(
@@ -68,6 +118,95 @@ class RiskManager:
         consecutive_losses = self.database.count_consecutive_losses(limit=20)
         exceeded = consecutive_losses >= self.settings.risk.max_consecutive_losses
         return exceeded, consecutive_losses
+
+    def kill_switch_active(self) -> bool:
+        self._load_kill_switch()
+        return self._kill_switch is not None and self._kill_switch.active
+
+    def kill_switch_status(self) -> dict[str, Any] | None:
+        self._load_kill_switch()
+        if self._kill_switch is None:
+            return None
+        return asdict(self._kill_switch)
+
+    def reset_kill_switch(self) -> None:
+        self._kill_switch = None
+        self._persist_kill_switch()
+
+    def _trip_kill_switch(
+        self,
+        *,
+        event_code: str,
+        reason: str,
+        metric_name: str,
+        metric_value: float,
+        threshold: float,
+    ) -> dict[str, Any]:
+        if self._kill_switch is None:
+            self._kill_switch = KillSwitchState(
+                active=True,
+                event_code=event_code,
+                reason=reason,
+                metric_name=metric_name,
+                metric_value=float(metric_value),
+                threshold=float(threshold),
+                tripped_at=datetime.now(timezone.utc).isoformat(),
+            )
+            self._persist_kill_switch()
+        payload = asdict(self._kill_switch)
+        payload["newly_tripped"] = True
+        return payload
+
+    def evaluate_kill_switch(self, account: dict[str, Any]) -> tuple[bool, dict[str, Any] | None]:
+        self._load_kill_switch()
+        if self._kill_switch is not None:
+            payload = asdict(self._kill_switch)
+            payload["newly_tripped"] = False
+            return True, payload
+
+        drawdown_halted, drawdown = self.daily_drawdown_exceeded(account)
+        if drawdown_halted:
+            threshold = float(self.settings.risk.daily_drawdown_limit)
+            reason = f"Daily drawdown kill-switch tripped at {drawdown:.2%} (limit {threshold:.2%})"
+            return True, self._trip_kill_switch(
+                event_code="kill_switch_daily_drawdown",
+                reason=reason,
+                metric_name="daily_drawdown",
+                metric_value=drawdown,
+                threshold=threshold,
+            )
+
+        equity_halted, equity_drawdown = self.equity_high_watermark_exceeded(account)
+        if equity_halted:
+            threshold = float(self.settings.risk.daily_equity_max_drawdown_pct)
+            reason = (
+                f"Equity high-watermark kill-switch tripped at {equity_drawdown:.2%} "
+                f"(limit {threshold:.2%})"
+            )
+            return True, self._trip_kill_switch(
+                event_code="kill_switch_equity_high_watermark",
+                reason=reason,
+                metric_name="equity_high_watermark_drawdown",
+                metric_value=equity_drawdown,
+                threshold=threshold,
+            )
+
+        loss_halted, consecutive_losses = self.consecutive_losses_exceeded()
+        if loss_halted:
+            threshold = float(self.settings.risk.max_consecutive_losses)
+            reason = (
+                f"Consecutive-loss kill-switch tripped at {consecutive_losses:.0f} losses "
+                f"(limit {threshold:.0f})"
+            )
+            return True, self._trip_kill_switch(
+                event_code="kill_switch_consecutive_losses",
+                reason=reason,
+                metric_name="consecutive_losses",
+                metric_value=float(consecutive_losses),
+                threshold=threshold,
+            )
+
+        return False, None
 
     def spread_points(self, symbol_info: dict[str, Any]) -> int:
         return int(symbol_info.get("spread", 0))

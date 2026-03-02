@@ -119,3 +119,49 @@ def test_recommend_profile_rejects_when_positive_return_folds_are_insufficient(t
     assert profile["walk_forward_positive_return_folds"] == 0
     assert "rejection_reason" in profile
     assert "long_threshold" not in profile
+
+
+def test_recommend_profile_rejects_when_regime_coverage_is_missing(tmp_path):
+    engine = _engine(tmp_path)
+    report = {
+        "summary": {
+            "mean_accuracy": 0.81,
+            "mean_roc_auc": 0.67,
+            "regime_counts": {"sideway": 2, "mixed": 1},
+        },
+        "folds": [
+            {
+                "fold": 1,
+                "threshold_tuning": {
+                    "long_threshold": 0.55,
+                    "short_threshold": 0.67,
+                    "risk_per_trade": 0.005,
+                    "atr_stop_loss_mult": 3.0,
+                    "atr_take_profit_mult": 3.2,
+                    "sequence_probability_weight": 0.45,
+                    "objective": 3.74,
+                },
+                "backtest": {"Total Return [%]": 0.61},
+            },
+            {
+                "fold": 2,
+                "threshold_tuning": {
+                    "long_threshold": 0.56,
+                    "short_threshold": 0.66,
+                    "risk_per_trade": 0.005,
+                    "atr_stop_loss_mult": 3.1,
+                    "atr_take_profit_mult": 3.4,
+                    "sequence_probability_weight": 0.35,
+                    "objective": 2.15,
+                },
+                "backtest": {"Total Return [%]": 0.48},
+            },
+        ],
+    }
+
+    profile = engine.recommend_profile("GOLD", report)
+
+    assert profile["profile_accepted"] is False
+    assert profile["walk_forward_regime_coverage_ok"] is False
+    assert profile["walk_forward_missing_regimes"] == ["strong_trend"]
+    assert "Missing required market regimes" in profile["rejection_reason"]

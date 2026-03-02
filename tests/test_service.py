@@ -109,3 +109,44 @@ def test_service_chronos_gate_only_activates_in_selected_regime():
 
     assert active is True
     assert blocked is False
+
+
+def test_service_reset_kill_switch_returns_previous_state(tmp_path):
+    settings = Settings(
+        _env_file=None,
+        trading={"symbols": ["GOLD"]},
+        bot={"kill_switch_path": str(tmp_path / "kill_switch_state.json")},
+    )
+    service = TradingBotService.__new__(TradingBotService)
+    service.settings = settings
+    service.database = type("Database", (), {"record_event": lambda *args, **kwargs: None})()
+    service.notifier = type("Notifier", (), {"send_warning": lambda *args, **kwargs: True})()
+    from modules.risk_control import RiskManager
+
+    service.risk_manager = RiskManager(
+        settings,
+        type(
+            "RiskDb",
+            (),
+            {
+                "record_equity_snapshot": lambda *args, **kwargs: None,
+                "get_daily_equity_baseline": lambda *args, **kwargs: None,
+                "get_daily_high_watermark_equity": lambda *args, **kwargs: None,
+                "count_consecutive_losses": lambda *args, **kwargs: 0,
+            },
+        )(),
+    )
+    service.risk_manager._trip_kill_switch(
+        event_code="kill_switch_daily_drawdown",
+        reason="halted",
+        metric_name="daily_drawdown",
+        metric_value=0.03,
+        threshold=0.02,
+    )
+
+    result = service.reset_kill_switch()
+
+    assert result["status"] == "reset"
+    assert result["kill_switch_was_active"] is True
+    assert result["previous"]["reason"] == "halted"
+    assert service.risk_manager.kill_switch_active() is False

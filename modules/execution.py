@@ -204,6 +204,9 @@ class ExecutionEngine:
                             f"MT5 rejected {signal.symbol} with retcode {retcode}",
                             {"request": request, "response": result},
                         )
+                        self.notifier.send_error(
+                            f"MT5 rejected {signal.symbol} with retcode {retcode}"
+                        )
                         return ExecutionOutcome(
                             status="rejected",
                             message=f"MT5 rejected order with retcode {retcode}",
@@ -229,7 +232,7 @@ class ExecutionEngine:
 
         message = f"Execution failed after {self.settings.execution.max_retries} attempts"
         self.database.record_event("ERROR", "execution_failed", message, {"symbol": signal.symbol})
-        self.notifier.send(message)
+        self.notifier.send_error(message)
         return ExecutionOutcome(status="failed", message=message, requested_volume=volume, payload=request)
 
     def close_symbol_positions(self, symbol: str, reason: str) -> list[dict[str, Any]]:
@@ -257,7 +260,7 @@ class ExecutionEngine:
                 reason,
                 {"count": len(results), "tickets": [item.get("order") for item in results]},
             )
-            self.notifier.send(f"Guardian closed {len(results)} positions. Reason: {reason}")
+            self.notifier.send_warning(f"Guardian closed {len(results)} positions. Reason: {reason}")
         return results
 
     def close_symbol_long_positions(self, symbol: str, reason: str) -> list[dict[str, Any]]:
