@@ -4,6 +4,7 @@ import asyncio
 import html
 import re
 import xml.etree.ElementTree as ET
+from threading import RLock
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -11,6 +12,7 @@ from typing import Iterable
 from urllib.parse import quote_plus
 
 import httpx
+from cachetools import TTLCache
 from loguru import logger
 
 DEFAULT_GOOGLE_NEWS_QUERY = (
@@ -37,9 +39,16 @@ class NewsClient:
         *,
         timeout: float = 15.0,
         user_agent: str = "invest-advisor-bot/0.1",
+        cache_ttl_seconds: int = 900,
+        cache_maxsize: int = 128,
     ) -> None:
         self.timeout = timeout
         self.user_agent = user_agent
+        self._cache_lock = RLock()
+        self._feed_cache: TTLCache[tuple[str, int], list[NewsArticle]] = TTLCache(
+            maxsize=cache_maxsize,
+            ttl=cache_ttl_seconds,
+        )
 
     async def fetch_latest_macro_news(
         self,
@@ -64,6 +73,12 @@ class NewsClient:
         return await self.fetch_feed(feed_url, limit=limit)
 
     async def fetch_feed(self, feed_url: str, *, limit: int = 10) -> list[NewsArticle]:
+        cache_key = (feed_url, limit)
+        with self._cache_lock:
+            cached = self._feed_cache.get(cache_key)
+        if cache_key in self._feed_cache or cached is not None:
+            return list(cached or [])
+
         try:
             async with httpx.AsyncClient(
                 timeout=self.timeout,
@@ -77,10 +92,13 @@ class NewsClient:
             return []
 
         try:
-            return self._parse_rss(response.text, limit=limit)
+            articles = self._parse_rss(response.text, limit=limit)
         except Exception as exc:
             logger.exception("Failed to parse news feed {}: {}", feed_url, exc)
             return []
+        with self._cache_lock:
+            self._feed_cache[cache_key] = list(articles)
+        return articles
 
     @staticmethod
     def build_google_news_url(

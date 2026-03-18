@@ -1,20 +1,15 @@
 from __future__ import annotations
 
 import json
-import sqlite3
+import psycopg2
+from psycopg2.extras import DictCursor
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
-from pathlib import Path
 from typing import Any, Iterator
 
 import pandas as pd
 
 SCHEMA_SQL = """
-PRAGMA journal_mode=WAL;
-PRAGMA synchronous=NORMAL;
-PRAGMA temp_store=MEMORY;
-PRAGMA cache_size=-20000;
-
 CREATE TABLE IF NOT EXISTS market_bars (
     symbol TEXT NOT NULL,
     timeframe TEXT NOT NULL,
@@ -50,7 +45,7 @@ CREATE TABLE IF NOT EXISTS trades (
 );
 
 CREATE TABLE IF NOT EXISTS equity_snapshots (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     provider TEXT NOT NULL DEFAULT 'MT5',
     symbol TEXT NOT NULL DEFAULT 'ACCOUNT',
     ts_utc TEXT NOT NULL,
@@ -62,7 +57,7 @@ CREATE TABLE IF NOT EXISTS equity_snapshots (
 );
 
 CREATE TABLE IF NOT EXISTS heartbeat (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     ts_utc TEXT NOT NULL,
     ok INTEGER NOT NULL,
     latency_ms INTEGER NOT NULL,
@@ -70,7 +65,7 @@ CREATE TABLE IF NOT EXISTS heartbeat (
 );
 
 CREATE TABLE IF NOT EXISTS model_runs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     model_type TEXT NOT NULL,
     symbol TEXT NOT NULL,
     timeframe TEXT NOT NULL,
@@ -80,7 +75,7 @@ CREATE TABLE IF NOT EXISTS model_runs (
 );
 
 CREATE TABLE IF NOT EXISTS bot_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     ts_utc TEXT NOT NULL,
     level TEXT NOT NULL,
     event_type TEXT NOT NULL,
@@ -119,40 +114,46 @@ def utc_iso(value: datetime | None = None) -> str:
 
 
 class Database:
-    def __init__(self, path: Path):
-        self.path = path
+    def __init__(self, uri: str):
+        self.uri = uri
 
     @contextmanager
-    def connect(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self.path)
-        connection.row_factory = sqlite3.Row
+    def connect(self) -> Iterator[Any]:
+        connection = psycopg2.connect(self.uri)
         try:
-            connection.execute("PRAGMA foreign_keys=ON;")
             yield connection
             connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
         finally:
             connection.close()
 
     def initialize(self) -> None:
         with self.connect() as connection:
-            connection.executescript(SCHEMA_SQL)
-            self._ensure_column(connection, "trades", "provider", "TEXT NOT NULL DEFAULT 'MT5'")
-            self._ensure_column(connection, "equity_snapshots", "provider", "TEXT NOT NULL DEFAULT 'MT5'")
-            self._ensure_column(connection, "equity_snapshots", "symbol", "TEXT NOT NULL DEFAULT 'ACCOUNT'")
-            connection.executescript(POST_MIGRATION_SQL)
+            with connection.cursor() as cur:
+                cur.execute(SCHEMA_SQL)
+                self._ensure_column(connection, "trades", "provider", "TEXT NOT NULL DEFAULT 'MT5'")
+                self._ensure_column(connection, "equity_snapshots", "provider", "TEXT NOT NULL DEFAULT 'MT5'")
+                self._ensure_column(connection, "equity_snapshots", "symbol", "TEXT NOT NULL DEFAULT 'ACCOUNT'")
+                cur.execute(POST_MIGRATION_SQL)
 
     def _ensure_column(
         self,
-        connection: sqlite3.Connection,
+        connection: Any,
         table_name: str,
         column_name: str,
         column_definition: str,
     ) -> None:
-        cursor = connection.execute(f"PRAGMA table_info({table_name})")
-        columns = {str(row["name"]).lower() for row in cursor.fetchall()}
-        if column_name.lower() in columns:
-            return
-        connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}")
+        with connection.cursor(cursor_factory=DictCursor) as cursor:
+            cursor.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
+                (table_name.lower(),),
+            )
+            columns = {str(row["column_name"]).lower() for row in cursor.fetchall()}
+            if column_name.lower() in columns:
+                return
+            cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}")
 
     def upsert_bars(self, symbol: str, timeframe: str, frame: pd.DataFrame) -> int:
         if frame.empty:
@@ -186,18 +187,19 @@ class Database:
         INSERT INTO market_bars (
             symbol, timeframe, ts_utc, open, high, low, close, tick_volume, spread, real_volume
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT(symbol, timeframe, ts_utc) DO UPDATE SET
-            open=excluded.open,
-            high=excluded.high,
-            low=excluded.low,
-            close=excluded.close,
-            tick_volume=excluded.tick_volume,
-            spread=excluded.spread,
-            real_volume=excluded.real_volume
+            open=EXCLUDED.open,
+            high=EXCLUDED.high,
+            low=EXCLUDED.low,
+            close=EXCLUDED.close,
+            tick_volume=EXCLUDED.tick_volume,
+            spread=EXCLUDED.spread,
+            real_volume=EXCLUDED.real_volume
         """
         with self.connect() as connection:
-            connection.executemany(sql, records)
+            with connection.cursor() as cur:
+                cur.executemany(sql, records)
         return len(records)
 
     def load_bars(self, symbol: str, timeframe: str, limit: int | None = None) -> pd.DataFrame:
@@ -207,10 +209,10 @@ class Database:
             FROM (
                 SELECT symbol, timeframe, ts_utc, open, high, low, close, tick_volume, spread, real_volume
                 FROM market_bars
-                WHERE symbol = ? AND timeframe = ?
+                WHERE symbol = %s AND timeframe = %s
                 ORDER BY ts_utc DESC
-                LIMIT ?
-            )
+                LIMIT %s
+            ) AS sub_query
             ORDER BY ts_utc ASC
             """
             params: tuple[Any, ...] = (symbol, timeframe, limit)
@@ -218,13 +220,17 @@ class Database:
             sql = """
             SELECT symbol, timeframe, ts_utc, open, high, low, close, tick_volume, spread, real_volume
             FROM market_bars
-            WHERE symbol = ? AND timeframe = ?
+            WHERE symbol = %s AND timeframe = %s
             ORDER BY ts_utc ASC
             """
             params = (symbol, timeframe)
 
         with self.connect() as connection:
-            frame = pd.read_sql_query(sql, connection, params=params)
+            with connection.cursor() as cur:
+                cur.execute(sql, params)
+                rows = cur.fetchall()
+                columns = [col[0] for col in cur.description]
+                frame = pd.DataFrame(rows, columns=columns)
 
         if frame.empty:
             return frame
@@ -256,40 +262,41 @@ class Database:
             ticket, provider, symbol, side, volume, requested_price, executed_price, sl, tp, status,
             strategy, comment, opened_at, closed_at, profit, request_payload, response_payload
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT(ticket) DO UPDATE SET
-            provider=excluded.provider,
-            executed_price=excluded.executed_price,
-            sl=excluded.sl,
-            tp=excluded.tp,
-            status=excluded.status,
-            closed_at=excluded.closed_at,
-            profit=excluded.profit,
-            response_payload=excluded.response_payload
+            provider=EXCLUDED.provider,
+            executed_price=EXCLUDED.executed_price,
+            sl=EXCLUDED.sl,
+            tp=EXCLUDED.tp,
+            status=EXCLUDED.status,
+            closed_at=EXCLUDED.closed_at,
+            profit=EXCLUDED.profit,
+            response_payload=EXCLUDED.response_payload
         """
         with self.connect() as connection:
-            connection.execute(
-                sql,
-                (
-                    ticket,
-                    provider,
-                    symbol,
-                    side,
-                    volume,
-                    requested_price,
-                    executed_price,
-                    sl,
-                    tp,
-                    status,
-                    strategy,
-                    comment,
-                    utc_iso(),
-                    utc_iso(closed_at) if closed_at else None,
-                    profit,
-                    json.dumps(request_payload or {}, ensure_ascii=True),
-                    json.dumps(response_payload or {}, ensure_ascii=True),
-                ),
-            )
+            with connection.cursor() as cur:
+                cur.execute(
+                    sql,
+                    (
+                        ticket,
+                        provider,
+                        symbol,
+                        side,
+                        volume,
+                        requested_price,
+                        executed_price,
+                        sl,
+                        tp,
+                        status,
+                        strategy,
+                        comment,
+                        utc_iso(),
+                        utc_iso(closed_at) if closed_at else None,
+                        profit,
+                        json.dumps(request_payload or {}, ensure_ascii=True),
+                        json.dumps(response_payload or {}, ensure_ascii=True),
+                    ),
+                )
 
     def record_equity_snapshot(
         self,
@@ -299,68 +306,74 @@ class Database:
         provider: str = "MT5",
     ) -> None:
         with self.connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO equity_snapshots (
-                    provider, symbol, ts_utc, balance, equity, profit, margin_free, margin_level
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    provider,
-                    symbol,
-                    utc_iso(timestamp),
-                    float(account.get("balance", 0.0)),
-                    float(account.get("equity", 0.0)),
-                    float(account.get("profit", 0.0)),
-                    float(account.get("margin_free", 0.0)),
-                    account.get("margin_level"),
-                ),
-            )
+            with connection.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO equity_snapshots (
+                        provider, symbol, ts_utc, balance, equity, profit, margin_free, margin_level
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        provider,
+                        symbol,
+                        utc_iso(timestamp),
+                        float(account.get("balance", 0.0)),
+                        float(account.get("equity", 0.0)),
+                        float(account.get("profit", 0.0)),
+                        float(account.get("margin_free", 0.0)),
+                        account.get("margin_level"),
+                    ),
+                )
 
     def get_daily_equity_baseline(
         self,
         day: date,
         symbol: str = "ACCOUNT",
         provider: str = "MT5",
-    ) -> sqlite3.Row | None:
+    ) -> dict[str, Any] | None:
         with self.connect() as connection:
-            cursor = connection.execute(
-                """
-                SELECT *
-                FROM equity_snapshots
-                WHERE provider = ? AND symbol = ? AND substr(ts_utc, 1, 10) = ?
-                ORDER BY ts_utc ASC
-                LIMIT 1
-                """,
-                (provider, symbol, day.isoformat()),
-            )
-            return cursor.fetchone()
+            with connection.cursor(cursor_factory=DictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM equity_snapshots
+                    WHERE provider = %s AND symbol = %s AND substr(ts_utc, 1, 10) = %s
+                    ORDER BY ts_utc ASC
+                    LIMIT 1
+                    """,
+                    (provider, symbol, day.isoformat()),
+                )
+                row = cur.fetchone()
+                return dict(row) if row else None
 
     def get_latest_equity_snapshot(
         self,
         day: date,
         symbol: str = "ACCOUNT",
         provider: str = "MT5",
-    ) -> sqlite3.Row | None:
+    ) -> dict[str, Any] | None:
         with self.connect() as connection:
-            cursor = connection.execute(
-                """
-                SELECT *
-                FROM equity_snapshots
-                WHERE provider = ? AND symbol = ? AND substr(ts_utc, 1, 10) = ?
-                ORDER BY ts_utc DESC
-                LIMIT 1
-                """,
-                (provider, symbol, day.isoformat()),
-            )
-            return cursor.fetchone()
+            with connection.cursor(cursor_factory=DictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM equity_snapshots
+                    WHERE provider = %s AND symbol = %s AND substr(ts_utc, 1, 10) = %s
+                    ORDER BY ts_utc DESC
+                    LIMIT 1
+                    """,
+                    (provider, symbol, day.isoformat()),
+                )
+                row = cur.fetchone()
+                return dict(row) if row else None
 
     def record_heartbeat(self, ok: bool, latency_ms: int, message: str) -> None:
         with self.connect() as connection:
-            connection.execute(
-                "INSERT INTO heartbeat (ts_utc, ok, latency_ms, message) VALUES (?, ?, ?, ?)",
-                (utc_iso(), int(ok), latency_ms, message),
-            )
+            with connection.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO heartbeat (ts_utc, ok, latency_ms, message) VALUES (%s, %s, %s, %s)",
+                    (utc_iso(), int(ok), latency_ms, message),
+                )
 
     def record_model_run(
         self,
@@ -371,20 +384,21 @@ class Database:
         metrics: dict[str, Any],
     ) -> None:
         with self.connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO model_runs (model_type, symbol, timeframe, trained_at, artifact_path, metrics_json)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    model_type,
-                    symbol,
-                    timeframe,
-                    utc_iso(),
-                    artifact_path,
-                    json.dumps(metrics, ensure_ascii=True),
-                ),
-            )
+            with connection.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO model_runs (model_type, symbol, timeframe, trained_at, artifact_path, metrics_json)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        model_type,
+                        symbol,
+                        timeframe,
+                        utc_iso(),
+                        artifact_path,
+                        json.dumps(metrics, ensure_ascii=True),
+                    ),
+                )
 
     def record_event(
         self,
@@ -394,33 +408,35 @@ class Database:
         payload: dict[str, Any] | None = None,
     ) -> None:
         with self.connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO bot_events (ts_utc, level, event_type, message, payload_json)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    utc_iso(),
-                    level.upper(),
-                    event_type,
-                    message,
-                    json.dumps(payload or {}, ensure_ascii=True),
-                ),
-            )
+            with connection.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO bot_events (ts_utc, level, event_type, message, payload_json)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        utc_iso(),
+                        level.upper(),
+                        event_type,
+                        message,
+                        json.dumps(payload or {}, ensure_ascii=True),
+                    ),
+                )
 
     def get_last_trade_opened_at(self, symbol: str) -> datetime | None:
         with self.connect() as connection:
-            cursor = connection.execute(
-                """
-                SELECT opened_at
-                FROM trades
-                WHERE symbol = ?
-                ORDER BY opened_at DESC
-                LIMIT 1
-                """,
-                (symbol,),
-            )
-            row = cursor.fetchone()
+            with connection.cursor(cursor_factory=DictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT opened_at
+                    FROM trades
+                    WHERE symbol = %s
+                    ORDER BY opened_at DESC
+                    LIMIT 1
+                    """,
+                    (symbol,),
+                )
+                row = cur.fetchone()
         if row is None or not row["opened_at"]:
             return None
         return datetime.fromisoformat(row["opened_at"])
@@ -432,32 +448,34 @@ class Database:
         provider: str = "MT5",
     ) -> float | None:
         with self.connect() as connection:
-            cursor = connection.execute(
-                """
-                SELECT MAX(equity) as max_equity
-                FROM equity_snapshots
-                WHERE provider = ? AND symbol = ? AND substr(ts_utc, 1, 10) = ?
-                """,
-                (provider, symbol, day.isoformat()),
-            )
-            row = cursor.fetchone()
+            with connection.cursor(cursor_factory=DictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT MAX(equity) as max_equity
+                    FROM equity_snapshots
+                    WHERE provider = %s AND symbol = %s AND substr(ts_utc, 1, 10) = %s
+                    """,
+                    (provider, symbol, day.isoformat()),
+                )
+                row = cur.fetchone()
         if row is None or row["max_equity"] is None:
             return None
         return float(row["max_equity"])
 
     def count_consecutive_losses(self, limit: int = 10, provider: str = "MT5") -> int:
         with self.connect() as connection:
-            cursor = connection.execute(
-                """
-                SELECT profit, status
-                FROM trades
-                WHERE provider = ? AND status IN ('closed', 'filled')
-                ORDER BY opened_at DESC
-                LIMIT ?
-                """,
-                (provider, limit),
-            )
-            rows = cursor.fetchall()
+            with connection.cursor(cursor_factory=DictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT profit, status
+                    FROM trades
+                    WHERE provider = %s AND status IN ('closed', 'filled')
+                    ORDER BY opened_at DESC
+                    LIMIT %s
+                    """,
+                    (provider, limit),
+                )
+                rows = cur.fetchall()
         
         consecutive_losses = 0
         for row in rows:

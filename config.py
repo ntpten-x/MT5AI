@@ -379,6 +379,7 @@ class ModelSettings(BaseModel):
 
 class DatabaseSettings(BaseModel):
     path: str = "database/trade_history.db"
+    uri: str = ""
 
 
 class TelegramSettings(BaseModel):

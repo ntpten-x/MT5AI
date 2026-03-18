@@ -33,7 +33,7 @@ class TradingBotService:
     def __init__(self, settings: Settings):
         self.settings = settings
         configure_logging(settings)
-        self.database = Database(settings.database_path)
+        self.database = Database(settings.database.uri)
         self.database.initialize()
         self.bridge = MT5Bridge(settings)
         self.notifier = TelegramNotifier(

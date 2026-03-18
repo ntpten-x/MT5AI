@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from threading import RLock
 from typing import Any, Mapping, Sequence
 
 import pandas as pd
 import yfinance as yf
+from cachetools import TTLCache
 from loguru import logger
 
 DEFAULT_ASSET_UNIVERSE: dict[str, str] = {
@@ -56,15 +58,43 @@ class MarketDataClient:
     def __init__(
         self,
         asset_universe: Mapping[str, str] | None = None,
+        *,
+        cache_ttl_seconds: int = 900,
+        cache_maxsize: int = 256,
     ) -> None:
         self.asset_universe: dict[str, str] = dict(asset_universe or DEFAULT_ASSET_UNIVERSE)
+        self._cache_lock = RLock()
+        self._latest_price_cache: TTLCache[tuple[str, str], AssetQuote | None] = TTLCache(
+            maxsize=cache_maxsize,
+            ttl=cache_ttl_seconds,
+        )
+        self._history_cache: TTLCache[tuple[str, str, str, int | None], list[OhlcvBar]] = TTLCache(
+            maxsize=cache_maxsize,
+            ttl=cache_ttl_seconds,
+        )
+        self._snapshot_cache: TTLCache[tuple[str, ...], dict[str, AssetQuote | None]] = TTLCache(
+            maxsize=32,
+            ttl=cache_ttl_seconds,
+        )
+        self._core_history_cache: TTLCache[tuple[str, str, int | None, tuple[str, ...]], dict[str, list[OhlcvBar]]] = (
+            TTLCache(maxsize=32, ttl=cache_ttl_seconds)
+        )
 
     async def get_latest_price(self, ticker: str) -> AssetQuote | None:
+        cache_key = ("latest", ticker.upper())
+        with self._cache_lock:
+            cached = self._latest_price_cache.get(cache_key)
+        if cache_key in self._latest_price_cache or cached is not None:
+            return cached
+
         try:
-            return await asyncio.to_thread(self._get_latest_price_sync, ticker)
+            result = await asyncio.to_thread(self._get_latest_price_sync, ticker)
         except Exception as exc:
             logger.exception("Failed to fetch latest price for {}: {}", ticker, exc)
             return None
+        with self._cache_lock:
+            self._latest_price_cache[cache_key] = result
+        return result
 
     async def get_latest_prices(self, tickers: Sequence[str]) -> dict[str, AssetQuote | None]:
         tasks = [self.get_latest_price(ticker) for ticker in tickers]
@@ -87,8 +117,14 @@ class MarketDataClient:
         interval: str = "1d",
         limit: int | None = None,
     ) -> list[OhlcvBar]:
+        cache_key = (ticker.upper(), period, interval, limit)
+        with self._cache_lock:
+            cached = self._history_cache.get(cache_key)
+        if cache_key in self._history_cache or cached is not None:
+            return list(cached or [])
+
         try:
-            return await asyncio.to_thread(
+            result = await asyncio.to_thread(
                 self._get_history_sync,
                 ticker,
                 period,
@@ -104,11 +140,23 @@ class MarketDataClient:
                 exc,
             )
             return []
+        with self._cache_lock:
+            self._history_cache[cache_key] = list(result)
+        return result
 
     async def get_core_market_snapshot(self) -> dict[str, AssetQuote | None]:
+        cache_key = tuple(self.asset_universe.items())
+        with self._cache_lock:
+            cached = self._snapshot_cache.get(cache_key)
+        if cache_key in self._snapshot_cache or cached is not None:
+            return dict(cached or {})
+
         tickers = list(self.asset_universe.values())
         quotes = await self.get_latest_prices(tickers)
-        return {asset_name: quotes.get(ticker) for asset_name, ticker in self.asset_universe.items()}
+        payload = {asset_name: quotes.get(ticker) for asset_name, ticker in self.asset_universe.items()}
+        with self._cache_lock:
+            self._snapshot_cache[cache_key] = dict(payload)
+        return payload
 
     async def get_core_market_history(
         self,
@@ -117,6 +165,12 @@ class MarketDataClient:
         interval: str = "1d",
         limit: int | None = None,
     ) -> dict[str, list[OhlcvBar]]:
+        cache_key = (period, interval, limit, tuple(self.asset_universe.items()))
+        with self._cache_lock:
+            cached = self._core_history_cache.get(cache_key)
+        if cache_key in self._core_history_cache or cached is not None:
+            return {asset: list(bars) for asset, bars in (cached or {}).items()}
+
         tasks = {
             asset_name: self.get_history(ticker, period=period, interval=interval, limit=limit)
             for asset_name, ticker in self.asset_universe.items()
@@ -130,6 +184,8 @@ class MarketDataClient:
                 payload[asset_name] = []
                 continue
             payload[asset_name] = result
+        with self._cache_lock:
+            self._core_history_cache[cache_key] = {asset: list(bars) for asset, bars in payload.items()}
         return payload
 
     def _get_latest_price_sync(self, ticker: str) -> AssetQuote | None:
@@ -284,4 +340,3 @@ class MarketDataClient:
             return None
         text = str(value).strip()
         return text or None
-

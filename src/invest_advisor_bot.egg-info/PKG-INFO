@@ -1,0 +1,150 @@
+Metadata-Version: 2.4
+Name: invest-advisor-bot
+Version: 0.1.0
+Summary: Telegram AI chatbot for investment guidance using market data, macro news, and technical trend analysis.
+Author: Codex
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: cachetools>=5.5.2
+Requires-Dist: httpx>=0.27.2
+Requires-Dist: loguru>=0.7.2
+Requires-Dist: numpy>=1.26.4
+Requires-Dist: pandas>=2.2.3
+Requires-Dist: pydantic>=2.9.2
+Requires-Dist: pydantic-settings>=2.6.1
+Requires-Dist: python-telegram-bot>=20.7
+Requires-Dist: python-dotenv>=1.0.1
+Requires-Dist: yfinance>=0.2.54
+Requires-Dist: psycopg2-binary>=2.9.9
+Requires-Dist: sqlalchemy>=2.0.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.3.3; extra == "dev"
+Requires-Dist: ruff>=0.8.6; extra == "dev"
+
+# MT5AI Bot
+
+MT5AI Bot is a production-oriented scaffold for MetaTrader 5 algorithmic trading. It is designed around four layers:
+
+1. Data layer: pull OHLCV from MT5 and persist to SQLite with WAL mode.
+2. Brain layer: engineer features, train XGBoost, and optionally blend in Chronos-2 forecasts.
+3. Strategy and risk layer: session filters, spread control, ATR-based position sizing, and daily drawdown guard.
+4. Execution layer: retry-aware order routing with MT5 deviation handling, news/spread kill-switches, broker-specific spread profiling, and Telegram alerts.
+
+## Quick Start
+
+1. Create a virtual environment.
+2. Install dependencies.
+3. Copy `.env.example` to `.env` and fill in your MT5 demo credentials.
+4. Initialize the database and backfill bars.
+5. Train the XGBoost model.
+6. Run backtests, walk-forward analysis, then start demo trading.
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e .[dev]
+copy .env.example .env
+python main.py init-db
+python main.py check-symbols
+python main.py backfill
+python main.py train-xgb --symbol EURUSD
+python main.py backtest --symbol EURUSD
+python main.py walk-forward --symbol EURUSD
+python main.py run-live
+```
+
+## Optional Chronos-2
+
+Chronos-2 is wired as an optional component because it is heavier than the rest of the stack. Install it only when you are ready to use it:
+
+```powershell
+pip install -e .[chronos]
+```
+
+Then set:
+
+```env
+MODEL__CHRONOS_ENABLED=true
+MODEL__CHRONOS_MODEL_ID=amazon/chronos-2
+MODEL__CHRONOS_DEVICE=cpu
+```
+
+## Commands
+
+- `init-db`: create SQLite schema.
+- `backfill`: fetch historical bars from MT5 into SQLite.
+- `collect`: refresh the latest bars.
+- `train-xgb`: train and save the XGBoost classifier.
+- `refresh-models`: backfill and retrain calibrated models with tuned thresholds.
+- `backtest`: run a VectorBT backtest.
+- `walk-forward`: run rolling walk-forward validation to reduce overfitting risk.
+- `heartbeat`: test MT5 connectivity and snapshot account equity.
+- `check-symbols`: inspect how active canonical symbols resolve to broker symbols.
+- `run-live`: start APScheduler with trading and heartbeat jobs.
+
+## Windows Autostart
+
+The repository includes demo runner scripts for Windows and VPS setups:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-startup-autostart.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\install-logon-task.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\run-live-demo.ps1
+```
+
+Notes:
+
+- `run-live-demo.ps1` runs `refresh-models` first, then starts `run-live`, and auto-restarts after crashes.
+- `run-live` now acquires a lock file, so duplicate launchers will refuse to start a second trading loop.
+- Startup-folder autostart is installed to the current user profile.
+- A Task Scheduler logon trigger is also available for VPS environments.
+- Remove them with `remove-startup-autostart.ps1` and `remove-logon-task.ps1`.
+
+## News Guard
+
+- The default economic calendar feed is `https://nfs.faireconomy.media/ff_calendar_thisweek.json`.
+- Relevant high-impact events can switch the bot between `pre_news`, `pre_news_close_only`, `release_minute`, `post_release_freeze`, `post_news_cooldown`, and `post_news_reentry`.
+- The guard can also apply stricter event-specific handling for `Powell press conference`, `FOMC rate decision`, `FOMC statement`, `FOMC minutes`, `NFP payrolls/wages/unemployment`, inflation subtypes such as `CPI m/m`, `CPI y/y`, `Core CPI`, `Core PCE`, and macro releases such as `PPI`, `Retail Sales`, and `ISM`.
+- These phases can block new entries, tighten spread thresholds, and close positions around the release window.
+- Tune the behavior with the `NEWS__*` and `RISK__NEWS_SPREAD_LIMIT_POINTS` settings in `.env`.
+
+## Spread Profile
+
+- `GOLD` and `XAUUSD` can use a broker-specific spread profile built from stored MT5 bars.
+- `BTCUSD` and `ETHUSD` can resolve automatically to broker-specific aliases such as `BTCUSDm` when `TRADING__AUTO_DISCOVER_BROKER_SYMBOLS=true`.
+- The live guard derives dynamic soft/news/extreme spread limits by regime (`weekday`, `weekend_open`, `rollover`, and the news phases above), session, and UTC hour, then persists them to `data/spread_profiles.json`.
+- Refresh happens during `refresh-models`, so the profile tracks your broker's actual spread regime instead of relying on one fixed global threshold.
+
+## Project Layout
+
+```text
+.
+├── main.py
+├── config.py
+├── database/
+├── logs/
+├── models/
+├── modules/
+│   ├── backtest.py
+│   ├── brain_ai.py
+│   ├── db.py
+│   ├── execution.py
+│   ├── feature_engineering.py
+│   ├── logging_setup.py
+│   ├── mt5_bridge.py
+│   ├── notifications.py
+│   ├── risk_control.py
+│   ├── service.py
+│   ├── signals.py
+│   ├── timeframes.py
+│   ├── types.py
+│   └── walk_forward.py
+└── tests/
+```
+
+## Notes
+
+- Start on MT5 demo only.
+- Keep `EXECUTION__DRY_RUN=true` until the whole path is validated end-to-end.
+- Daily loss guard is enforced from equity snapshots, not just closed trade PnL.
+- Spread filtering and retry logic are built in, but you still need broker-specific tuning.
