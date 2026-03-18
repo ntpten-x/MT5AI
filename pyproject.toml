@@ -3,52 +3,38 @@ requires = ["setuptools>=70", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mt5ai-bot"
+name = "invest-advisor-bot"
 version = "0.1.0"
-description = "Production-oriented MT5 trading bot scaffold with SQLite, XGBoost, Chronos-2 hooks, and VectorBT."
+description = "Telegram AI chatbot for investment guidance using market data, macro news, and technical trend analysis."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Codex" }]
 dependencies = [
-  "APScheduler>=3.10.4",
-  "MetaTrader5>=5.0.47",
   "httpx>=0.27.2",
-  "joblib>=1.4.2",
-  "lightgbm>=4.5.0",
   "loguru>=0.7.2",
   "numpy>=1.26.4",
   "pandas>=2.2.3",
-  "pandas-ta-classic>=0.3.59",
   "pydantic>=2.9.2",
   "pydantic-settings>=2.6.1",
+  "python-telegram-bot>=20.7",
   "python-dotenv>=1.0.1",
-  "optuna>=4.7.0",
-  "requests>=2.32.3",
-  "scikit-learn>=1.5.2",
-  "vectorbt>=0.27.2",
-  "xgboost>=2.1.1",
+  "yfinance>=0.2.54",
 ]
 
 [project.optional-dependencies]
-chronos = [
-  "chronos-forecasting>=2.0",
-  "torch>=2.4",
-]
-ai = [
-  "chronos-forecasting>=2.0",
-  "torch>=2.4",
-]
 dev = [
   "pytest>=8.3.3",
   "ruff>=0.8.6",
 ]
 
 [project.scripts]
-mt5ai = "main:main"
+invest-advisor-bot = "invest_advisor_bot.main:main"
 
 [tool.setuptools]
-py-modules = ["main", "config"]
-packages = ["modules"]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
