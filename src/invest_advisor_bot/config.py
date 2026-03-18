@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     )
 
     telegram_token: str = Field(default="", validation_alias="TELEGRAM_TOKEN")
+    telegram_report_chat_id: str = Field(default="", validation_alias="TELEGRAM_REPORT_CHAT_ID")
     llm_api_key: str = Field(default="", validation_alias="LLM_API_KEY")
     llm_model: str = Field(default="gpt-5-mini", validation_alias="LLM_MODEL")
     llm_base_url: str = Field(default="https://api.openai.com/v1", validation_alias="LLM_BASE_URL")

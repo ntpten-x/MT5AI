@@ -23,6 +23,7 @@ def create_application(
     market_history_period: str = "6mo",
     market_history_interval: str = "1d",
     market_history_limit: int = 180,
+    telegram_report_chat_id: str = "",
 ) -> Application:
     """Create the base Telegram application and register handlers."""
 
@@ -44,7 +45,12 @@ def create_application(
         market_history_period=market_history_period,
         market_history_interval=market_history_interval,
         market_history_limit=market_history_limit,
+        telegram_report_chat_id=telegram_report_chat_id,
     )
+    
+    from invest_advisor_bot.bot.jobs import register_jobs
+    register_jobs(application)
+    
     register_handlers(application)
     return application
 

@@ -31,20 +31,18 @@ from invest_advisor_bot.services.recommendation_service import (
 
 BOT_SERVICES_KEY: Final[str] = "bot_services"
 MAX_TELEGRAM_MESSAGE_LENGTH: Final[int] = 4000
-CALLBACK_GOLD: Final[str] = "quick:gold"
-CALLBACK_US_STOCKS: Final[str] = "quick:us_stocks"
-CALLBACK_ETF: Final[str] = "quick:etf"
-CALLBACK_GLOBAL_TREND: Final[str] = "quick:global_trend"
-CALLBACK_QUICK_SUMMARY: Final[str] = "quick:summary"
+CALLBACK_MACRO: Final[str] = "quick:macro"
+CALLBACK_ALLOCATION: Final[str] = "quick:allocation"
+CALLBACK_RISK: Final[str] = "quick:risk"
+CALLBACK_OUTLOOK: Final[str] = "quick:outlook"
 
 QuickAction = tuple[str, AssetScope, FallbackVerbosity | None]
 
 QUICK_ACTION_QUESTIONS: Final[dict[str, QuickAction]] = {
-    CALLBACK_GOLD: ("ช่วยวิเคราะห์ทองคำตอนนี้ พร้อมคำแนะนำว่า ซื้อ ขาย หรือรอก่อน", "gold-only", None),
-    CALLBACK_US_STOCKS: ("ช่วยวิเคราะห์หุ้นสหรัฐและดัชนีหลักตอนนี้ พร้อมคำแนะนำแบบกระชับ", "us-stocks", None),
-    CALLBACK_ETF: ("ช่วยวิเคราะห์ ETF หลักตอนนี้ พร้อมคำแนะนำแบบกระชับ", "etf-only", None),
-    CALLBACK_GLOBAL_TREND: ("สรุปเทรนด์ตลาดโลกตอนนี้แบบกระชับ พร้อมสินทรัพย์ที่ควรจับตา", "all", None),
-    CALLBACK_QUICK_SUMMARY: ("สรุปด่วนภาพรวมตลาดโลกตอนนี้", "all", "short"),
+    CALLBACK_MACRO: ("ช่วยสรุปภาพรวมเศรษฐกิจมหภาค (Macro Economic Update) และข่าวกระทบการลงทุน", "all", None),
+    CALLBACK_ALLOCATION: ("ช่วยแนะนำกลยุทธ์การจัดสรรสินทรัพย์ (Global Asset Allocation Strategy) ในภาพรวม", "all", None),
+    CALLBACK_RISK: ("ช่วยประเมินความเสี่ยงและจุดที่ต้องระวังเพื่อรักษาเงินต้น (Risk Assessment)", "all", None),
+    CALLBACK_OUTLOOK: ("ช่วยสรุปมุมมองทองคำและดัชนีหุ้นต่างประเทศระยะยาว (Gold & Equity Outlook)", "all", None),
 }
 
 
@@ -57,6 +55,7 @@ class BotServices:
     market_history_period: str
     market_history_interval: str
     market_history_limit: int
+    telegram_report_chat_id: str = ""
 
 
 def register_handlers(application: Application) -> None:
@@ -82,12 +81,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     text = (
-        "สวัสดีครับ ผมคือ AI Investment Advisor บน Telegram\n"
-        "ผมช่วยสรุปภาพรวมตลาดโลก วิเคราะห์ทองคำ หุ้นสหรัฐฯ และ ETF จากข่าวมหภาค "
-        "ข้อมูลตลาด และเทรนด์ทางเทคนิค\n\n"
+        "สวัสดีครับ ผมคือ AI Wealth Manager บน Telegram\n"
+        "ผมช่วยวิเคราะห์เศรษฐกิจมหภาค การจัดสรรสินทรัพย์ และการประเมินความเสี่ยงเพื่อพอร์ตเติบโตระยะยาว\n\n"
         "เลือกเมนูด้านล่าง หรือพิมพ์คำถามได้โดยตรง เช่น\n"
-        "\"ตอนนี้หุ้นเมกาน่าเข้าไหม?\"\n"
-        "\"ทองคำวันนี้ควรซื้อหรือรอก่อน?\""
+        "\"มุมมองการจัดพอร์ตราสารหนี้ช่วงนี้เป็นอย่างไร?\"\n"
+        "\"ความเสี่ยงที่ต้องกังวลสูงสุดในครึ่งปีนี้คืออะไร?\""
     )
     await _reply_text(message, text, reply_markup=_build_main_menu())
 
@@ -189,15 +187,12 @@ def _build_main_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("⚡ สรุปด่วน", callback_data=CALLBACK_QUICK_SUMMARY),
-                InlineKeyboardButton("📰 สรุปเทรนด์ตลาดโลก", callback_data=CALLBACK_GLOBAL_TREND),
+                InlineKeyboardButton("🌍 Macro Update", callback_data=CALLBACK_MACRO),
+                InlineKeyboardButton("⚖️ Asset Allocation", callback_data=CALLBACK_ALLOCATION),
             ],
             [
-                InlineKeyboardButton("🥇 วิเคราะห์ทองคำ", callback_data=CALLBACK_GOLD),
-                InlineKeyboardButton("📈 วิเคราะห์หุ้นสหรัฐ", callback_data=CALLBACK_US_STOCKS),
-            ],
-            [
-                InlineKeyboardButton("📊 วิเคราะห์ ETF", callback_data=CALLBACK_ETF),
+                InlineKeyboardButton("🛡️ Risk Assessment", callback_data=CALLBACK_RISK),
+                InlineKeyboardButton("📈 Gold & Equity Outlook", callback_data=CALLBACK_OUTLOOK),
             ],
         ]
     )

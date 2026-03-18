@@ -17,9 +17,10 @@ dependencies = [
   "pandas>=2.2.3",
   "pydantic>=2.9.2",
   "pydantic-settings>=2.6.1",
-  "python-telegram-bot>=20.7",
+  "python-telegram-bot[job-queue]>=20.7",
   "python-dotenv>=1.0.1",
   "yfinance>=0.2.54",
+  "pandas-datareader>=0.10.0",
   "psycopg2-binary>=2.9.9",
   "sqlalchemy>=2.0.0",
 ]

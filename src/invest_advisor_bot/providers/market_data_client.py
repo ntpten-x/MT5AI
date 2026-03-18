@@ -23,6 +23,8 @@ DEFAULT_ASSET_UNIVERSE: dict[str, str] = {
     "xlf_etf": "XLF",
     "xle_etf": "XLE",
     "xlk_etf": "XLK",
+    "tlt_etf": "TLT",
+    "voo_etf": "VOO",
 }
 
 
@@ -340,3 +342,44 @@ class MarketDataClient:
             return None
         text = str(value).strip()
         return text or None
+
+    async def get_macro_context(self) -> dict[str, float | None]:
+        """Fetch VIX, 10Y Yield, and CPI Inflation Rate."""
+        return await asyncio.to_thread(self._get_macro_context_sync)
+
+    def _get_macro_context_sync(self) -> dict[str, float | None]:
+        import pandas_datareader.data as web
+        vix = None
+        tnx = None
+        cpi_yoy = None
+
+        try:
+            vix_ticker = yf.Ticker("^VIX")
+            vix = vix_ticker.fast_info.get("lastPrice")
+        except Exception as e:
+            logger.warning("Failed to fetch VIX: {}", e)
+
+        try:
+            tnx_ticker = yf.Ticker("^TNX")
+            tnx = tnx_ticker.fast_info.get("lastPrice")
+        except Exception as e:
+            logger.warning("Failed to fetch TNX: {}", e)
+
+        try:
+            now = datetime.now()
+            start = now - pd.DateOffset(months=15)
+            df = web.DataReader('CPIAUCSL', 'fred', start, now)
+            if not df.empty and len(df) >= 13:
+                latest = df.iloc[-1]
+                one_year_ago = df.iloc[-13]
+                if one_year_ago.values[0] != 0:
+                    cpi_yoy = ((latest.values[0] - one_year_ago.values[0]) / one_year_ago.values[0]) * 100.0
+                    cpi_yoy = round(cpi_yoy, 2)
+        except Exception as e:
+            logger.warning("Failed to fetch CPI: {}", e)
+
+        return {
+            "vix": float(vix) if vix else None,
+            "tnx": float(tnx) if tnx else None,
+            "cpi_yoy": cpi_yoy,
+        }

@@ -58,6 +58,7 @@ def build_application(settings: Settings):
         market_history_period=settings.market_history_period,
         market_history_interval=settings.market_history_interval,
         market_history_limit=settings.market_history_limit,
+        telegram_report_chat_id=settings.telegram_report_chat_id,
     )
 
 

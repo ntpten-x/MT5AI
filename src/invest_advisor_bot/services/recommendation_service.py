@@ -20,14 +20,15 @@ DEFAULT_CHAT_HISTORY_LIMIT = 3
 DEFAULT_NEWS_CONTEXT_LIMIT = 5
 DEFAULT_REASON_LIMIT = 2
 DEFAULT_SPECIFIC_SCOPE_NEWS_LIMIT = 3
-AssetScope = Literal["all", "gold-only", "us-stocks", "etf-only"]
+AssetScope = Literal["all", "gold-only", "us-stocks", "etf-only", "bonds"]
 FallbackVerbosity = Literal["short", "medium", "detailed"]
 
 ASSET_SCOPE_MEMBERS: dict[AssetScope, tuple[str, ...]] = {
     "all": (),
     "gold-only": ("gold_futures", "gld_etf", "iau_etf"),
-    "us-stocks": ("sp500_index", "nasdaq_index", "spy_etf", "qqq_etf", "vti_etf", "xlf_etf", "xle_etf", "xlk_etf"),
-    "etf-only": ("spy_etf", "qqq_etf", "gld_etf", "iau_etf", "vti_etf", "xlf_etf", "xle_etf", "xlk_etf"),
+    "us-stocks": ("sp500_index", "nasdaq_index", "spy_etf", "qqq_etf", "vti_etf", "xlf_etf", "xle_etf", "xlk_etf", "voo_etf"),
+    "etf-only": ("spy_etf", "qqq_etf", "gld_etf", "iau_etf", "vti_etf", "xlf_etf", "xle_etf", "xlk_etf", "tlt_etf", "voo_etf"),
+    "bonds": ("tlt_etf",),
 }
 
 
@@ -64,6 +65,7 @@ class RecommendationService:
         news: Sequence[NewsArticle],
         market_data: Mapping[str, AssetQuote | None],
         trends: Mapping[str, TrendAssessment],
+        macro_context: dict[str, float | None] | None = None,
         question: str | None = None,
         conversation_key: str | None = None,
         asset_scope: AssetScope = "all",
@@ -76,6 +78,7 @@ class RecommendationService:
             trends=trends,
             asset_scope=asset_scope,
             question=question,
+            macro_context=macro_context,
         )
         history_lines = self._get_history_lines(conversation_key)
         user_prompt = self._build_prompt(
@@ -140,7 +143,7 @@ class RecommendationService:
         history_limit: int = 180,
         asset_scope: AssetScope = "all",
     ) -> RecommendationResult:
-        news, market_data, trends = await self._gather_context(
+        news, market_data, trends, macro_context = await self._gather_context(
             news_client=news_client,
             market_data_client=market_data_client,
             news_limit=news_limit,
@@ -152,6 +155,7 @@ class RecommendationService:
             news=news,
             market_data=market_data,
             trends=trends,
+            macro_context=macro_context,
             question="สรุปภาพรวมตลาดโลกและคำแนะนำล่าสุดแบบกระชับ",
             asset_scope=asset_scope,
         )
@@ -182,7 +186,7 @@ class RecommendationService:
             )
 
         effective_scope = asset_scope or self._detect_asset_scope(normalized_question)
-        news, market_data, trends = await self._gather_context(
+        news, market_data, trends, macro_context = await self._gather_context(
             news_client=news_client,
             market_data_client=market_data_client,
             news_limit=news_limit,
@@ -194,6 +198,7 @@ class RecommendationService:
             news=news,
             market_data=market_data,
             trends=trends,
+            macro_context=macro_context,
             question=normalized_question,
             conversation_key=conversation_key,
             asset_scope=effective_scope,
@@ -218,6 +223,7 @@ class RecommendationService:
         trends: Mapping[str, TrendAssessment],
         asset_scope: AssetScope,
         question: str | None,
+        macro_context: dict[str, float | None] | None = None,
     ) -> dict[str, Any]:
         filtered_market_data, filtered_trends = self._filter_asset_context(
             market_data=market_data,
@@ -245,6 +251,7 @@ class RecommendationService:
             "question": question,
             "news_headlines": compact_news,
             "asset_snapshots": compact_assets,
+            "macro_context": macro_context or {},
         }
 
     def _build_prompt(
@@ -256,6 +263,12 @@ class RecommendationService:
     ) -> str:
         news_lines = self._format_news_lines(payload.get("news_headlines"))
         asset_lines = self._format_asset_lines(payload.get("asset_snapshots"))
+        macro_context = payload.get("macro_context") or {}
+        macro_text = (
+            f"- VIX Index (ความกลัวตลาด): {macro_context.get('vix', 'N/A')}\n"
+            f"- ผลตอบแทนพันธบัตร 10 ปี (TNX): {macro_context.get('tnx', 'N/A')}%\n"
+            f"- เงินเฟ้อสหรัฐฯ (CPI YoY): {macro_context.get('cpi_yoy', 'N/A')}%"
+        )
         history_text = "\n".join(history_lines) if history_lines else "ไม่มี"
 
         intro = (
@@ -267,17 +280,20 @@ class RecommendationService:
             f"{intro}"
             "บริบทบทสนทนาล่าสุด:\n"
             f"{history_text}\n\n"
+            "ดัชนีชี้วัดเศรษฐกิจมหภาค (Macro Indicators):\n"
+            f"{macro_text}\n\n"
             "ข่าวสำคัญล่าสุด:\n"
             f"{news_lines}\n\n"
             "สรุปสินทรัพย์สำคัญ:\n"
             f"{asset_lines}\n\n"
-            "ตอบเป็นภาษาไทยแบบกระชับสำหรับ Telegram\n"
+            "ตอบเป็นภาษาไทยแบบจัดสรรพอร์ตความมั่งคั่งสำหรับ Telegram\n"
             "ต้องมี:\n"
-            "1. ภาพรวมตลาดสั้น ๆ\n"
-            "2. คำแนะนำรายสินทรัพย์ โดยใช้ ซื้อ / ขาย / 관망 (Wait and see)\n"
-            "3. เหตุผลหลักที่อ้างอิงจากข่าวและ indicator ที่ให้มาเท่านั้น\n"
-            "4. ความเสี่ยงหรือสิ่งที่ต้องติดตาม\n"
-            "ถ้าสัญญาณขัดแย้งกันให้เอนเอียงไปทาง 관망 (Wait and see)"
+            "1. ภาพรวมเศรษฐกิจและตลาด\n"
+            "2. มุมมองจัดสรรน้ำหนักการลงทุน โดยใช้ Overweight / Neutral / Underweight\n"
+            "3. [Worst-case Scenario] คาดการณ์ % Drawdown กรณีเกิดวิกฤต/สงคราม ของพอร์ตอ้างอิง (เช่น VOO+Gold 50/50) พร้อมเงื่อนไขจุดถอยหนีความเสี่ยง (Trigger to Cash)\n"
+            "4. เหตุผลหลักที่อ้างอิงจากข่าว Macro และแนวโน้มระยะยาว\n"
+            "5. ความเสี่ยงสูงสุดหรือปัจจัยที่ต้องเฝ้าระวัง\n"
+            "ถ้าแนวโน้มมีความก้ำกึ่ง ไม่ชัดเจนให้เอนเอียงไปทาง Neutral"
         )
 
     def _build_fallback_summary(
@@ -432,7 +448,7 @@ class RecommendationService:
         history_period: str,
         history_interval: str,
         history_limit: int,
-    ) -> tuple[list[NewsArticle], Mapping[str, AssetQuote | None], dict[str, TrendAssessment]]:
+    ) -> tuple[list[NewsArticle], Mapping[str, AssetQuote | None], dict[str, TrendAssessment], dict[str, float | None]]:
         news_task = news_client.fetch_latest_macro_news(limit=min(news_limit, DEFAULT_NEWS_CONTEXT_LIMIT))
         market_snapshot_task = market_data_client.get_core_market_snapshot()
         market_history_task = market_data_client.get_core_market_history(
@@ -440,13 +456,15 @@ class RecommendationService:
             interval=history_interval,
             limit=history_limit,
         )
-        news, market_data, market_history = await asyncio.gather(
+        macro_task = market_data_client.get_macro_context()
+        news, market_data, market_history, macro_context = await asyncio.gather(
             news_task,
             market_snapshot_task,
             market_history_task,
+            macro_task,
         )
         trends = self._build_trends_from_history(market_history)
-        return list(news), market_data, trends
+        return list(news), market_data, trends, macro_context
 
     def _build_trends_from_history(
         self,
@@ -541,10 +559,10 @@ class RecommendationService:
     @staticmethod
     def _direction_to_recommendation(direction: str) -> str:
         return {
-            "uptrend": "ซื้อ",
-            "downtrend": "ขาย",
-            "sideways": "관망 (Wait and see)",
-        }.get(direction, "관망 (Wait and see)")
+            "uptrend": "เพิ่มน้ำหนักการลงทุน (Overweight)",
+            "downtrend": "ลดน้ำหนักการลงทุน (Underweight)",
+            "sideways": "คงน้ำหนักการลงทุน (Neutral)",
+        }.get(direction, "คงน้ำหนักการลงทุน (Neutral)")
 
     @staticmethod
     def _detect_asset_scope(question: str) -> AssetScope:
@@ -569,14 +587,16 @@ class RecommendationService:
             "gold_futures": "ทองคำ",
             "sp500_index": "ดัชนี S&P 500",
             "nasdaq_index": "ดัชนี NASDAQ",
-            "spy_etf": "ETF SPY",
-            "qqq_etf": "ETF QQQ",
-            "gld_etf": "ETF GLD",
-            "iau_etf": "ETF IAU",
-            "vti_etf": "ETF VTI",
-            "xlf_etf": "ETF XLF",
-            "xle_etf": "ETF XLE",
-            "xlk_etf": "ETF XLK",
+            "spy_etf": "ETF SPY (S&P 500)",
+            "qqq_etf": "ETF QQQ (NASDAQ)",
+            "gld_etf": "ETF GLD (Gold)",
+            "iau_etf": "ETF IAU (Gold)",
+            "vti_etf": "ETF VTI (Total Stock)",
+            "xlf_etf": "ETF XLF (Financial)",
+            "xle_etf": "ETF XLE (Energy)",
+            "xlk_etf": "ETF XLK (Tech)",
+            "tlt_etf": "ETF TLT (20+ Yr Bond)",
+            "voo_etf": "ETF VOO (S&P 500)",
         }.get(str(asset_name), str(asset_name))
 
     def _humanize_signals(self, signals: object) -> str:
@@ -753,3 +773,46 @@ class RecommendationService:
         if value is None or pd.isna(value):
             return None
         return round(float(value), digits)
+
+    async def generate_daily_wealth_analysis(
+        self,
+        *,
+        news_client: NewsClient,
+        market_data_client: MarketDataClient,
+        news_limit: int = 8,
+        history_period: str = "6mo",
+        history_interval: str = "1d",
+        history_limit: int = 180,
+    ) -> RecommendationResult:
+        """Generate a structured daily wealth report."""
+        news, market_data, trends, macro_context = await self._gather_context(
+            news_client=news_client,
+            market_data_client=market_data_client,
+            news_limit=news_limit,
+            history_period=history_period,
+            history_interval=history_interval,
+            history_limit=history_limit,
+        )
+
+        question = "โปรดจัดทำรายงาน 'รายงานสรุปความมั่งคั่งประจำวัน (Daily Intelligence Report)' ตามรูปแบบที่กำหนด"
+        return await self.generate_recommendation(
+            news=news,
+            market_data=market_data,
+            trends=trends,
+            macro_context=macro_context,
+            question=question,
+            asset_scope="all",
+        )
+
+    def check_black_swan(self, news: list[NewsArticle], macro_context: dict[str, float | None]) -> tuple[bool, str]:
+        """Detect extreme market danger trigger events."""
+        vix = macro_context.get("vix")
+        if vix and vix > 30.0:
+            return True, f"📌 VIX Index พุ่งสูงถึง {vix} สะท้อนความกลัวในตลาดระดับวิกฤต"
+            
+        keywords = ["market crash", "war", "สงคราม", "วิกฤต", "ทรุดหนัก"]
+        for article in news:
+            title = article.title.lower()
+            if any(kw in title for kw in keywords):
+                return True, f"🚨 ตรวจพบข่าววิกฤตสำคัญ: {article.title}"
+        return False, ""
