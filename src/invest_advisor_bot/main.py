@@ -6,6 +6,7 @@ from contextlib import suppress
 from loguru import logger
 
 from invest_advisor_bot.bot.telegram_app import create_application
+from invest_advisor_bot.bot.health_check import start_health_check_server
 from invest_advisor_bot.config import Settings, get_settings
 from invest_advisor_bot.providers.llm_client import OpenAILLMClient
 from invest_advisor_bot.providers.market_data_client import MarketDataClient
@@ -76,6 +77,8 @@ def main() -> int:
 
     logger.info("Starting Telegram investment advisor bot")
     application = build_application(settings)
+
+    start_health_check_server()
 
     try:
         application.run_polling(drop_pending_updates=False)
