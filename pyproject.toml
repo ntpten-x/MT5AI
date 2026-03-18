@@ -24,6 +24,7 @@ dependencies = [
   "psycopg2-binary>=2.9.9",
   "sqlalchemy>=2.0.0",
   "cachetools>=5.3.3",
+  "setuptools",
 ]
 
 [project.optional-dependencies]
