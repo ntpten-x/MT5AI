@@ -37,6 +37,14 @@ CALLBACK_US_STOCKS: Final[str] = "quick:us_stocks"
 CALLBACK_ETF: Final[str] = "quick:etf"
 CALLBACK_GLOBAL_TREND: Final[str] = "quick:global_trend"
 CALLBACK_STOCK_IDEAS: Final[str] = "quick:stock_ideas"
+CALLBACK_MENU_HELP: Final[str] = "menu:help"
+CALLBACK_MENU_PROFILE: Final[str] = "menu:profile"
+CALLBACK_MENU_PORTFOLIO: Final[str] = "menu:portfolio"
+CALLBACK_MENU_WATCHLIST: Final[str] = "menu:watchlist"
+CALLBACK_MENU_PREFS: Final[str] = "menu:prefs"
+CALLBACK_MENU_REPORT_NOW: Final[str] = "menu:report_now"
+CALLBACK_MENU_MARKET_UPDATE: Final[str] = "menu:market_update"
+CALLBACK_MENU_SCORECARD: Final[str] = "menu:scorecard"
 
 QuickAction = tuple[str, AssetScope, FallbackVerbosity | None]
 
@@ -103,6 +111,7 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("market_update", market_update_command))
     application.add_handler(CallbackQueryHandler(handle_quick_action, pattern=r"^quick:"))
+    application.add_handler(CallbackQueryHandler(handle_menu_action, pattern=r"^menu:"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
     application.add_error_handler(handle_error)
 
@@ -175,6 +184,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "ตัวอย่างคำถาม\n- วิเคราะห์ทองคำแบบรักษาเงินต้น\n- ขอพอร์ต ETF สำหรับคนรับความเสี่ยงปานกลาง\n- ช่วยสรุปหุ้นสหรัฐแบบสั้นมาก"
             "\n- ตอนนี้ควรซื้อหุ้นอะไร 5 ตัว\n- วิเคราะห์ AAPL และ MSFT ให้หน่อย"
         ),
+        reply_markup=_build_main_menu(),
     )
 
 
@@ -790,7 +800,30 @@ async def handle_quick_action(update: Update, context: ContextTypes.DEFAULT_TYPE
         source_kind="quick_action",
         result_payload=result.input_payload,
     )
-    await _reply_text(query.message, result.recommendation_text)
+    await _reply_text(query.message, result.recommendation_text, reply_markup=_build_main_menu())
+
+
+async def handle_menu_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or query.message is None:
+        return
+
+    menu_actions = {
+        CALLBACK_MENU_HELP: help_command,
+        CALLBACK_MENU_PROFILE: profile_command,
+        CALLBACK_MENU_PORTFOLIO: portfolio_command,
+        CALLBACK_MENU_WATCHLIST: watchlist_command,
+        CALLBACK_MENU_PREFS: prefs_command,
+        CALLBACK_MENU_REPORT_NOW: report_now_command,
+        CALLBACK_MENU_MARKET_UPDATE: market_update_command,
+        CALLBACK_MENU_SCORECARD: scorecard_command,
+    }
+    action_handler = menu_actions.get(query.data or "")
+    await query.answer()
+    if action_handler is None:
+        await query.message.reply_text("ไม่พบเมนูที่เลือก กรุณาลองใหม่อีกครั้ง", reply_markup=_build_main_menu())
+        return
+    await action_handler(update, context)
 
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -836,7 +869,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         source_kind="chat",
         result_payload=result.input_payload,
     )
-    await _reply_text(message, result.recommendation_text)
+    await _reply_text(message, result.recommendation_text, reply_markup=_build_main_menu())
 
 
 async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -881,6 +914,22 @@ def _build_main_menu() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton("📊 วิเคราะห์ ETF", callback_data=CALLBACK_ETF),
                 InlineKeyboardButton("🏆 หุ้นเด่น 5 ตัว", callback_data=CALLBACK_STOCK_IDEAS),
+            ],
+            [
+                InlineKeyboardButton("👤 โปรไฟล์", callback_data=CALLBACK_MENU_PROFILE),
+                InlineKeyboardButton("💼 พอร์ต", callback_data=CALLBACK_MENU_PORTFOLIO),
+            ],
+            [
+                InlineKeyboardButton("👀 Watchlist", callback_data=CALLBACK_MENU_WATCHLIST),
+                InlineKeyboardButton("⚙️ ตั้งค่า", callback_data=CALLBACK_MENU_PREFS),
+            ],
+            [
+                InlineKeyboardButton("🗞 รายงานล่าสุด", callback_data=CALLBACK_MENU_REPORT_NOW),
+                InlineKeyboardButton("📈 Market Update", callback_data=CALLBACK_MENU_MARKET_UPDATE),
+            ],
+            [
+                InlineKeyboardButton("📚 วิธีใช้", callback_data=CALLBACK_MENU_HELP),
+                InlineKeyboardButton("🧪 Scorecard", callback_data=CALLBACK_MENU_SCORECARD),
             ],
         ]
     )

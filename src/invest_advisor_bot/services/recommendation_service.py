@@ -915,6 +915,10 @@ class RecommendationService:
             history_limit=history_limit,
             research_query="market risk alert latest macro news VIX US stocks gold ETF",
         )
+        portfolio_snapshot = await self._gather_portfolio_snapshot(
+            market_data_client=market_data_client,
+            holdings=(),
+        )
 
         payload = self._build_payload(
             news=news,
@@ -922,6 +926,7 @@ class RecommendationService:
             trends=trends,
             macro_context=macro_context,
             research_findings=research_findings,
+            portfolio_snapshot=portfolio_snapshot,
             asset_scope="all",
             question="continuous market scan",
             investor_profile=get_investor_profile("conservative"),
@@ -982,17 +987,19 @@ class RecommendationService:
         if daily_pick_enabled:
             top_pick = picks[0]
             top_news = stock_news.get(top_pick.asset, [])
-            top_news_line = f" | ข่าว: {top_news[0].title}" if top_news else ""
             top_confidence = assess_stock_candidate_confidence(top_pick)
+            top_news_line = f"\n- ข่าวประกอบ: {top_news[0].title}" if top_news else ""
             alerts.append(
                 InterestingAlert(
                     key=f"stock:daily:{today_key}:{top_pick.ticker}",
                     severity="info",
                     text=(
-                        f"Stock Pick of the Day\n"
-                        f"- {top_pick.company_name} ({top_pick.ticker})\n"
-                        f"- คะแนน: {top_pick.composite_score:.2f} | confidence: {top_confidence.label} ({top_confidence.score}) | มุมมอง: {self._humanize_stock_stance(top_pick.stance)}\n"
-                        f"- เหตุผล: {'; '.join(top_pick.rationale[:3])}{top_news_line}"
+                        f"{self._format_badged_title('✅ ยืนยัน', 'หุ้นเด่นวันนี้')}\n"
+                        f"- หุ้น: {top_pick.company_name} ({top_pick.ticker}) | sector {top_pick.sector}\n"
+                        f"- ภาพรวม: คะแนน {top_pick.composite_score:.2f} | ความมั่นใจ {self._humanize_confidence_label(top_confidence.label)} ({top_confidence.score:.2f}) | มุมมอง {self._humanize_stock_stance(top_pick.stance)}\n"
+                        f"- เหตุผล: {'; '.join(top_pick.rationale[:3])}"
+                        f"{top_news_line}\n"
+                        f"- Action: {self._build_stock_candidate_action(top_pick, top_confidence.score, mode='daily')}"
                     ),
                     metadata={
                         "stock_pick": True,
@@ -1011,18 +1018,21 @@ class RecommendationService:
             if candidate.composite_score < score_threshold + 0.3:
                 continue
             candidate_news = stock_news.get(candidate.asset, [])
-            research_line = f" | วิจัยเว็บ: {research_findings[0].title}" if research_findings else ""
-            news_line = f" | ข่าว: {candidate_news[0].title}" if candidate_news else ""
             candidate_confidence = assess_stock_candidate_confidence(candidate)
+            candidate_news_line = f"\n- ข่าวประกอบ: {candidate_news[0].title}" if candidate_news else ""
+            research_line = f"\n- วิจัยประกอบ: {research_findings[0].title}" if research_findings else ""
             alerts.append(
                 InterestingAlert(
                     key=f"stock:opportunity:{candidate.ticker}:{int(round(candidate.composite_score * 10))}",
                     severity="info",
                     text=(
-                        f"Stock Opportunity Alert\n"
-                        f"- {candidate.company_name} ({candidate.ticker})\n"
-                        f"- คะแนน: {candidate.composite_score:.2f} | confidence: {candidate_confidence.label} ({candidate_confidence.score}) | sector: {candidate.sector}\n"
-                        f"- เหตุผล: {'; '.join(candidate.rationale[:3])}{news_line}{research_line}"
+                        f"{self._format_badged_title('🔎 จับตา', 'หุ้นเด่นเพิ่ม')}\n"
+                        f"- หุ้น: {candidate.company_name} ({candidate.ticker}) | sector {candidate.sector}\n"
+                        f"- ภาพรวม: คะแนน {candidate.composite_score:.2f} | ความมั่นใจ {self._humanize_confidence_label(candidate_confidence.label)} ({candidate_confidence.score:.2f}) | มุมมอง {self._humanize_stock_stance(candidate.stance)}\n"
+                        f"- เหตุผล: {'; '.join(candidate.rationale[:3])}"
+                        f"{candidate_news_line}"
+                        f"{research_line}\n"
+                        f"- Action: {self._build_stock_candidate_action(candidate, candidate_confidence.score, mode='opportunity')}"
                     ),
                     metadata={
                         "stock_pick": True,
@@ -1062,10 +1072,11 @@ class RecommendationService:
                         key=f"watchlist:{candidate.ticker}:{int(round(candidate.composite_score * 10))}",
                         severity="info",
                         text=(
-                            f"Watchlist Alert\n"
-                            f"- {candidate.company_name} ({candidate.ticker})\n"
-                            f"- คะแนน: {candidate.composite_score:.2f} | confidence: {candidate_confidence.label} ({candidate_confidence.score}) | มุมมอง: {self._humanize_stock_stance(candidate.stance)}\n"
-                            f"- เหตุผล: {'; '.join(candidate.rationale[:3])}"
+                            f"{self._format_badged_title('🔎 จับตา', 'หุ้นใน Watchlist')}\n"
+                            f"- หุ้น: {candidate.company_name} ({candidate.ticker})\n"
+                            f"- ภาพรวม: คะแนน {candidate.composite_score:.2f} | ความมั่นใจ {self._humanize_confidence_label(candidate_confidence.label)} ({candidate_confidence.score:.2f}) | มุมมอง {self._humanize_stock_stance(candidate.stance)}\n"
+                            f"- เหตุผล: {'; '.join(candidate.rationale[:3])}\n"
+                            f"- Action: {self._build_stock_candidate_action(candidate, candidate_confidence.score, mode='watchlist')}"
                         ),
                         metadata={
                             "stock_pick": True,
@@ -1132,74 +1143,31 @@ class RecommendationService:
             current_breadth=market_breadth,
             regime="intraday",
         )
+        sector_breadth_trend = self._analyze_sector_breadth_trend(
+            state_store=sector_rotation_state_store,
+            current_breadth=breadth,
+            regime="intraday",
+        )
         if len(rotation) < 2:
             return []
         leaders = [item for item in rotation if item.stance == "overweight"][:2]
         laggards = [item for item in rotation if item.stance == "underweight"][:2]
         alerts: list[InterestingAlert] = []
-        if leaders:
-            alerts.append(
-                InterestingAlert(
-                    key=f"sector:leaders:{'-'.join(item.ticker or item.asset for item in leaders)}",
-                    severity="info",
-                    text="Sector Rotation Alert\n- กลุ่มนำตลาด: " + " | ".join(
-                        self._format_sector_rotation_alert_fragment(item, persistence, breadth)
-                        for item in leaders
-                    ),
-                )
-            )
-        if laggards:
-            alerts.append(
-                InterestingAlert(
-                    key=f"sector:laggards:{'-'.join(item.ticker or item.asset for item in laggards)}",
-                    severity="warning",
-                    text="Sector Rotation Warning\n- กลุ่มอ่อนแรง: " + " | ".join(
-                        self._format_sector_rotation_alert_fragment(item, persistence, breadth)
-                        for item in laggards
-                    ),
-                )
-            )
-        for item in breadth:
-            if item.equal_weight_confirmed:
-                continue
-            alerts.append(
-                InterestingAlert(
-                    key=f"sector:breadth:{item.ticker or item.sector}:narrow",
-                    severity="warning",
-                    text=(
-                        "Sector Breadth Warning\n"
-                        f"- {item.sector} ({item.ticker}) มีสัญญาณนำตลาดแบบกระจุกตัว\n"
-                        f"- breadth {item.advancers}/{item.constituent_count} | participation {item.participation_ratio:.0%} | avg constituent score {item.average_trend_score:.2f}"
-                    ),
-                )
-            )
+        news_bias = score_news_impacts(news, limit=2, min_abs_score=1.5) if news else []
+        snapshot_alert = self._build_sector_rotation_snapshot_alert(
+            leaders=leaders,
+            laggards=laggards,
+            persistence=persistence,
+            breadth=breadth,
+            sector_breadth_trend=sector_breadth_trend,
+            market_breadth=market_breadth,
+            market_breadth_trend=market_breadth_trend,
+            leadership_divergence=leadership_divergence,
+            news_impact=news_bias[0] if news_bias else None,
+        )
+        if snapshot_alert is not None:
+            alerts.append(snapshot_alert)
         if market_breadth is not None:
-            severity = "info" if market_breadth.rally_confirmed else "warning"
-            trend_suffix = ""
-            if market_breadth_trend is not None:
-                trend_suffix = (
-                    f" | trend {market_breadth_trend.trend_label}"
-                    f" {market_breadth_trend.sparkline}"
-                    f" | delta {market_breadth_trend.score_delta:+.2f}"
-                )
-            alerts.append(
-                InterestingAlert(
-                    key=(
-                        "market:breadth:"
-                        f"{market_breadth.participant_count}:{int(round(market_breadth.diffusion_score * 100))}"
-                    ),
-                    severity=severity,
-                    text=(
-                        "Market Breadth Check\n"
-                        f"- ภาพรวมตลาด: {market_breadth.breadth_label}\n"
-                        f"- breadth {market_breadth.advancers}/{market_breadth.participant_count}"
-                        f" | decliners {market_breadth.decliners}"
-                        f" | diffusion {market_breadth.diffusion_score:+.2f}"
-                        f" | avg trend score {market_breadth.average_trend_score:.2f}"
-                        f"{trend_suffix}"
-                    ),
-                )
-            )
             sp500_trend = trends.get("sp500_index")
             nasdaq_trend = trends.get("nasdaq_index")
             major_indexes_holding = any(
@@ -1223,55 +1191,12 @@ class RecommendationService:
                             f"{market_breadth_trend.trend_label if market_breadth_trend is not None else 'static'}"
                         ),
                         severity="warning",
-                        text=(
-                            "Market Internals Break\n"
-                            f"- ดัชนีหลักยังไม่เสียทรง แต่ internals เริ่มอ่อนลง\n"
-                            f"- market breadth: {market_breadth.breadth_label} | diffusion {market_breadth.diffusion_score:+.2f}"
-                            f" | avg trend score {market_breadth.average_trend_score:.2f}\n"
-                            f"- S&P 500 score {sp500_trend.score if sp500_trend is not None else 'n/a'}"
-                            f" | NASDAQ score {nasdaq_trend.score if nasdaq_trend is not None else 'n/a'}"
-                            f"{f' | breadth trend {market_breadth_trend.trend_label} {market_breadth_trend.sparkline}' if market_breadth_trend is not None else ''}"
+                        text=self._build_market_internals_break_text(
+                            market_breadth=market_breadth,
+                            market_breadth_trend=market_breadth_trend,
+                            sp500_trend=sp500_trend,
+                            nasdaq_trend=nasdaq_trend,
                         ),
-                )
-            )
-        for signal in leadership_divergence:
-            if signal.divergence_label != "narrow leadership":
-                continue
-            alerts.append(
-                InterestingAlert(
-                    key=f"market:divergence:{signal.cap_weight_ticker}:{signal.equal_weight_ticker}:{signal.divergence_label}",
-                    severity=signal.severity,
-                    text=(
-                        "Index Leadership Divergence\n"
-                        f"- {signal.label}: {signal.cap_weight_ticker} นำ {signal.equal_weight_ticker} แบบกระจุกตัว\n"
-                        f"- spread 1m {signal.short_return_spread:+.1%} | spread 3m {signal.medium_return_spread:+.1%}\n"
-                        f"- score {signal.cap_weight_ticker}={signal.cap_weight_score:.2f} | {signal.equal_weight_ticker}={signal.equal_weight_score:.2f}"
-                    ),
-                )
-            )
-        for insight in persistence:
-            if insight.changed_from is None:
-                continue
-            severity = "info" if insight.stance == "overweight" else "warning"
-            alerts.append(
-                InterestingAlert(
-                    key=f"sector:shift:{insight.ticker or insight.sector}:{insight.stance}:{insight.changed_from}",
-                    severity=severity,
-                    text=(
-                        "Sector Rotation Shift\n"
-                        f"- {insight.sector} ({insight.ticker}) เปลี่ยนจาก {insight.changed_from} เป็น {insight.stance}\n"
-                        f"- score ล่าสุด {insight.average_score + insight.score_delta:.2f} | delta {insight.score_delta:+.2f}"
-                    ),
-                )
-            )
-        if news:
-            news_bias = score_news_impacts(news, limit=2, min_abs_score=1.5)
-            for impact in news_bias[:1]:
-                alerts.append(
-                    InterestingAlert(
-                        key=f"sector:news:{self._slugify(impact.title)}",
-                        severity="info" if impact.sentiment == "positive" else "warning",
-                        text=f"Sector Macro Note\n- {impact.title}\n- {impact.rationale}",
                     )
                 )
         return alerts
@@ -1304,15 +1229,16 @@ class RecommendationService:
                     key=f"earnings:post:{item.ticker}:{item.earnings_at.date().isoformat()}:{item.stance}",
                     severity=severity,
                     text=(
-                        "Post-Earnings Alert\n"
-                        f"- {item.ticker} | surprise {item.surprise_pct if item.surprise_pct is not None else 'N/A'}% | guidance {item.guidance_signal} | management tone {item.management_tone}\n"
-                        f"- revenue {item.revenue_signal} ({item.revenue_qoq_trend} QoQ {self._format_percent_delta(item.revenue_qoq_change)}, {item.revenue_relative_signal} {self._format_percent_delta(item.revenue_vs_sector_median)} vs sector, rev gap {self._format_percent_delta(item.revenue_expectation_gap_pct)}"
+                        f"{self._format_badged_title('✅ ยืนยัน' if item.stance == 'bullish' else '🟠 ระวัง', 'สรุปหลังประกาศงบ')}\n"
+                        f"- หุ้น: {item.ticker} | surprise {item.surprise_pct if item.surprise_pct is not None else 'N/A'}% | EPS est {item.eps_estimate if item.eps_estimate is not None else 'N/A'} | EPS reported {item.reported_eps if item.reported_eps is not None else 'N/A'}\n"
+                        f"- ภาพรวม: guidance {self._humanize_earnings_direction(item.guidance_signal)} | น้ำเสียงผู้บริหาร {self._humanize_earnings_direction(item.management_tone)} | มุมมอง {'เชิงบวก' if item.stance == 'bullish' else 'เชิงลบ'}\n"
+                        f"- คุณภาพงบ: รายได้ {self._humanize_earnings_signal(item.revenue_signal)} ({self._humanize_trend_description(item.revenue_qoq_trend)} QoQ {self._format_percent_delta(item.revenue_qoq_change)}, {self._humanize_relative_signal(item.revenue_relative_signal)} {self._format_percent_delta(item.revenue_vs_sector_median)} vs sector, rev gap {self._format_percent_delta(item.revenue_expectation_gap_pct)}"
                         f"{f' via {item.revenue_expectation_source}' if item.revenue_expectation_source else ''})"
-                        f" | margin {item.margin_signal} ({item.margin_qoq_trend} QoQ {self._format_percent_delta(item.margin_qoq_change)}, {item.margin_relative_signal} {self._format_percent_delta(item.margin_vs_sector_median)} vs sector)"
-                        f" | FCF {item.fcf_quality} ({item.fcf_qoq_trend} QoQ {self._format_percent_delta(item.fcf_qoq_change)}, {item.fcf_relative_signal} {self._format_percent_delta(item.fcf_vs_sector_median)} vs sector)\n"
-                        f"- earnings quality: {item.earnings_quality_label} ({item.earnings_quality_score}) | one-off risk: {item.one_off_risk}\n"
-                        f"- มุมมอง: {'เชิงบวก' if item.stance == 'bullish' else 'เชิงลบ'}\n"
-                        f"- เหตุผล: {'; '.join(item.rationale[:3])}"
+                        f" | margin {self._humanize_earnings_signal(item.margin_signal)} ({self._humanize_trend_description(item.margin_qoq_trend)} QoQ {self._format_percent_delta(item.margin_qoq_change)}, {self._humanize_relative_signal(item.margin_relative_signal)} {self._format_percent_delta(item.margin_vs_sector_median)} vs sector)"
+                        f" | FCF {self._humanize_fcf_quality(item.fcf_quality)} ({self._humanize_trend_description(item.fcf_qoq_trend)} QoQ {self._format_percent_delta(item.fcf_qoq_change)}, {self._humanize_relative_signal(item.fcf_relative_signal)} {self._format_percent_delta(item.fcf_vs_sector_median)} vs sector)\n"
+                        f"- คุณภาพกำไร: {self._humanize_earnings_quality_label(item.earnings_quality_label)} ({item.earnings_quality_score:.2f}) | one-off risk {self._humanize_one_off_risk(item.one_off_risk)}\n"
+                        f"- เหตุผล: {'; '.join(item.rationale[:3])}\n"
+                        f"- Action: {self._build_post_earnings_action(item)}"
                     ),
                 )
             )
@@ -1335,15 +1261,17 @@ class RecommendationService:
         for ticker, event in earnings.items():
             days_left = (event.earnings_at.date() - now.date()).days
             urgency = "วันนี้" if days_left <= 0 else f"อีก {days_left} วัน"
+            badge = "🟠 ระวัง" if days_left <= 1 else "🔎 จับตา"
             alerts.append(
                 InterestingAlert(
                     key=f"earnings:{ticker}:{event.earnings_at.date().isoformat()}",
                     severity="warning" if days_left <= 1 else "info",
                     text=(
-                        f"Earnings Calendar Alert\n"
-                        f"- {ticker} จะประกาศงบ {urgency}\n"
-                        f"- เวลา: {event.earnings_at.astimezone(timezone.utc).isoformat(timespec='minutes')}\n"
-                        f"- EPS Estimate: {event.eps_estimate if event.eps_estimate is not None else 'N/A'}"
+                        f"{self._format_badged_title(badge, 'ปฏิทินงบ')}\n"
+                        f"- หุ้น: {ticker} | จะประกาศงบ {urgency}\n"
+                        f"- ภาพรวม: เวลา {event.earnings_at.astimezone(timezone.utc).isoformat(timespec='minutes')} | EPS estimate {event.eps_estimate if event.eps_estimate is not None else 'N/A'}\n"
+                        f"- เหตุผล: ยิ่งใกล้วันประกาศงบ ความผันผวนและ gap risk มักเพิ่มขึ้น\n"
+                        f"- Action: {self._build_earnings_calendar_action(days_left)}"
                     ),
                 )
             )
@@ -1397,14 +1325,13 @@ class RecommendationService:
                     key=f"earnings:pre-risk:{item.ticker}:{item.earnings_at.date().isoformat()}:{int(round(item.risk_score * 10))}",
                     severity="warning",
                     text=(
-                        "Pre-Earnings Risk Alert\n"
-                        f"- {item.ticker} ก่อนงบมีความคาดหวังสูงเมื่อเทียบกับ internals ตลาด\n"
-                        f"- risk score {item.risk_score:.1f} | forward PE {item.forward_pe if item.forward_pe is not None else 'N/A'}"
-                        f" | revenue est growth {self._format_percent_delta(item.revenue_growth_estimate)}"
-                        f" | EPS est growth {self._format_percent_delta(item.eps_growth_estimate)}\n"
-                        f"- market breadth {item.market_breadth_label or 'n/a'}"
+                        f"{self._format_badged_title('🟠 ระวัง', 'ความเสี่ยงก่อนประกาศงบ')}\n"
+                        f"- หุ้น: {item.ticker} | วันประกาศงบ {item.earnings_at.date().isoformat()}\n"
+                        f"- ภาพรวม: risk score {item.risk_score:.1f} | forward PE {item.forward_pe if item.forward_pe is not None else 'N/A'} | revenue est growth {self._format_percent_delta(item.revenue_growth_estimate)} | EPS est growth {self._format_percent_delta(item.eps_growth_estimate)}\n"
+                        f"- บริบทตลาด: breadth {self._translate_market_breadth_label(item.market_breadth_label) if item.market_breadth_label else 'n/a'}"
                         f"{f' | divergence {item.divergence_label}' if item.divergence_label else ''}\n"
-                        f"- เหตุผล: {'; '.join(item.rationale[:4])}"
+                        f"- เหตุผล: {'; '.join(item.rationale[:4])}\n"
+                        f"- Action: {self._build_pre_earnings_action(item)}"
                     ),
                 )
             )
@@ -1428,15 +1355,18 @@ class RecommendationService:
         for item in setups[:2]:
             if item.setup_score < 1.8:
                 continue
+            badge = "✅ ยืนยัน" if item.setup_score >= 2.4 else "🔎 จับตา"
             alerts.append(
                 InterestingAlert(
                     key=f"earnings:setup:{item.ticker}:{item.earnings_at.date().isoformat()}:{int(round(item.setup_score*10))}",
                     severity="info",
                     text=(
-                        "Earnings Setup Watch\n"
-                        f"- {item.company_name} ({item.ticker}) | score {item.setup_score:.2f} | {item.setup_label}\n"
-                        f"- trend {item.trend_signal} | valuation {item.valuation_signal} | expectations {item.expectation_signal}\n"
-                        f"- เหตุผล: {'; '.join(item.rationale[:3])}"
+                        f"{self._format_badged_title(badge, 'Setup ก่อนงบ')}\n"
+                        f"- หุ้น: {item.company_name} ({item.ticker}) | วันประกาศงบ {item.earnings_at.date().isoformat()}\n"
+                        f"- ภาพรวม: score {item.setup_score:.2f} | {self._humanize_setup_label(item.setup_label)}\n"
+                        f"- ปัจจัย: trend {self._humanize_trend_description(item.trend_signal)} | valuation {self._humanize_valuation_signal(item.valuation_signal)} | expectations {self._humanize_expectation_signal(item.expectation_signal)}\n"
+                        f"- เหตุผล: {'; '.join(item.rationale[:3])}\n"
+                        f"- Action: {self._build_earnings_setup_action(item)}"
                     ),
                 )
             )
@@ -1790,10 +1720,10 @@ class RecommendationService:
                     key=f"risk:{risk_score.level}:{int(round(risk_score.score))}",
                     severity="warning" if risk_score.level in {"elevated", "high"} else "critical",
                     text=(
-                        f"Risk Alert\n"
-                        f"- Risk Score: {risk_score.score:.1f}/10 ({risk_score.level})\n"
-                        f"- มุมมอง: {self._extract_portfolio_value(portfolio_plan, 'risk_watch') or reason_text}\n"
-                        f"- สิ่งที่ควรทำ: {self._extract_portfolio_value(portfolio_plan, 'action_plan') or 'เพิ่มเงินสดและลดสินทรัพย์เสี่ยงบางส่วน'}"
+                        f"{self._format_badged_title('🟠 ระวัง', 'ความเสี่ยงตลาด')}\n"
+                        f"- ภาพรวม: คะแนนความเสี่ยง {risk_score.score:.1f}/10 | ระดับ {self._humanize_risk_level(risk_score.level)}\n"
+                        f"- เหตุผล: {self._extract_portfolio_value(portfolio_plan, 'risk_watch') or reason_text}\n"
+                        f"- Action: {self._extract_portfolio_value(portfolio_plan, 'action_plan') or 'เพิ่มเงินสดและลดสินทรัพย์เสี่ยงบางส่วน'}"
                     ),
                 )
             )
@@ -1812,11 +1742,11 @@ class RecommendationService:
                     key=f"news:{impact.sentiment}:{self._slugify(impact.title)}",
                     severity="info" if impact.sentiment == "positive" else "warning",
                     text=(
-                        f"{prefix}\n"
-                        f"- Headline: {impact.title}\n"
-                        f"- Impact Score: {impact.impact_score:.1f} | Bucket: {impact.related_bucket}\n"
+                        f"{self._format_badged_title('✅ ยืนยัน' if impact.sentiment == 'positive' else '🟠 ระวัง', 'ข่าวหนุนโอกาส' if impact.sentiment == 'positive' else 'ข่าวมหภาค')}\n"
+                        f"- ภาพรวม: {impact.title}\n"
+                        f"- ผลกระทบ: score {impact.impact_score:.1f} | หมวด {self._humanize_related_bucket(impact.related_bucket)}\n"
                         f"- เหตุผล: {impact.rationale}\n"
-                        f"- แนวทาง: {action}"
+                        f"- Action: {action}"
                     ),
                 )
             )
@@ -1828,11 +1758,10 @@ class RecommendationService:
                         key=f"rank:long:{ranked.asset}:{int(round(ranked.score * 10))}",
                         severity="info",
                         text=(
-                            f"Opportunity Alert\n"
-                            f"- สินทรัพย์เด่น: {ranked.label}\n"
-                            f"- Ranking Score: {ranked.score:.2f}\n"
-                            f"- มุมมอง: {ranked.rationale}\n"
-                            f"- แนวทาง: ทยอยเพิ่มน้ำหนักได้ถ้าสอดคล้องกับโปรไฟล์และ market regime"
+                            f"{self._format_badged_title('🔎 จับตา', 'สินทรัพย์เด่น')}\n"
+                            f"- ภาพรวม: {ranked.label} | score {ranked.score:.2f}\n"
+                            f"- เหตุผล: {ranked.rationale}\n"
+                            f"- Action: ทยอยเพิ่มน้ำหนักได้ถ้าสอดคล้องกับโปรไฟล์และ market regime"
                         ),
                     )
                 )
@@ -1842,11 +1771,10 @@ class RecommendationService:
                         key=f"rank:avoid:{ranked.asset}:{int(round(abs(ranked.score) * 10))}",
                         severity="warning",
                         text=(
-                            f"Trend Warning\n"
-                            f"- สินทรัพย์อ่อนแรง: {ranked.label}\n"
-                            f"- Ranking Score: {ranked.score:.2f}\n"
-                            f"- มุมมอง: {ranked.rationale}\n"
-                            f"- แนวทาง: ชะลอการเพิ่มพอร์ตหรือรอให้สัญญาณกลับตัวชัดขึ้น"
+                            f"{self._format_badged_title('🟠 ระวัง', 'สินทรัพย์อ่อนแรง')}\n"
+                            f"- ภาพรวม: {ranked.label} | score {ranked.score:.2f}\n"
+                            f"- เหตุผล: {ranked.rationale}\n"
+                            f"- Action: ชะลอการเพิ่มพอร์ตหรือรอให้สัญญาณกลับตัวชัดขึ้น"
                         ),
                     )
                 )
@@ -3171,29 +3099,288 @@ class RecommendationService:
             rationale=tuple(dict.fromkeys(rationale))[:4] or ("ไม่มี headline guidance ชัดเจน",),
         )
 
-    def _format_sector_rotation_alert_fragment(
+    def _build_sector_rotation_snapshot_alert(
+        self,
+        *,
+        leaders: Sequence[SectorRotationSignal],
+        laggards: Sequence[SectorRotationSignal],
+        persistence: Sequence[SectorPersistenceInsight],
+        breadth: Sequence[SectorBreadthInsight],
+        sector_breadth_trend: Sequence[SectorBreadthTrend],
+        market_breadth: MarketBreadthDiffusion | None,
+        market_breadth_trend: MarketBreadthTrend | None,
+        leadership_divergence: Sequence[IndexLeadershipDivergence],
+        news_impact: Any,
+    ) -> InterestingAlert | None:
+        if not leaders and not laggards and market_breadth is None:
+            return None
+
+        severity = "warning" if (market_breadth is not None and not market_breadth.rally_confirmed) or laggards else "info"
+        breadth_map = {item.sector: item for item in breadth}
+        persistence_map = {item.sector: item for item in persistence}
+        breadth_trend_map = {item.sector: item for item in sector_breadth_trend}
+        risk_lines = self._build_sector_rotation_risk_lines(
+            breadth=breadth,
+            sector_breadth_trend=sector_breadth_trend,
+            leadership_divergence=leadership_divergence,
+            persistence=persistence,
+        )
+        macro_line = self._build_sector_macro_note(
+            news_impact=news_impact,
+            leaders=leaders,
+            laggards=laggards,
+            market_breadth=market_breadth,
+        )
+        action_lines = self._build_sector_rotation_action_lines(
+            leaders=leaders,
+            laggards=laggards,
+            market_breadth=market_breadth,
+        )
+
+        lines = ["สรุปการหมุนกลุ่มหุ้น"]
+        if market_breadth is not None:
+            lines.append(f"- ภาพรวมตลาด: {self._format_market_breadth_summary(market_breadth)}")
+        if market_breadth_trend is not None:
+            trend_line = self._format_market_breadth_trend_summary(market_breadth_trend)
+            if trend_line:
+                lines.append(f"- เทียบรอบก่อน: {trend_line}")
+
+        if leaders:
+            lines.extend(
+                [
+                    "",
+                    "ผู้นำตลาด",
+                    *[
+                        f"- {self._format_sector_rotation_snapshot_signal(item, persistence_map, breadth_map, breadth_trend_map)}"
+                        for item in leaders
+                    ],
+                ]
+            )
+        if laggards:
+            lines.extend(
+                [
+                    "",
+                    "กลุ่มอ่อนแรง",
+                    *[
+                        f"- {self._format_sector_rotation_snapshot_signal(item, persistence_map, breadth_map, breadth_trend_map)}"
+                        for item in laggards
+                    ],
+                ]
+            )
+        if risk_lines:
+            lines.extend(["", "จุดที่ต้องระวัง", *[f"- {line}" for line in risk_lines]])
+        if macro_line:
+            lines.extend(["", "ธีมข่าวที่เกี่ยวข้อง", f"- {macro_line}"])
+        if action_lines:
+            lines.extend(["", "Action", *[f"- {line}" for line in action_lines]])
+
+        leaders_key = "-".join(item.ticker or item.asset for item in leaders) or "none"
+        laggards_key = "-".join(item.ticker or item.asset for item in laggards) or "none"
+        return InterestingAlert(
+            key=f"sector:snapshot:{leaders_key}:{laggards_key}",
+            severity=severity,
+            text="\n".join(lines),
+        )
+
+    def _build_sector_rotation_risk_lines(
+        self,
+        *,
+        breadth: Sequence[SectorBreadthInsight],
+        sector_breadth_trend: Sequence[SectorBreadthTrend],
+        leadership_divergence: Sequence[IndexLeadershipDivergence],
+        persistence: Sequence[SectorPersistenceInsight],
+    ) -> list[str]:
+        lines: list[str] = []
+        breadth_trend_map = {item.sector: item for item in sector_breadth_trend}
+        for item in breadth:
+            if item.equal_weight_confirmed or item.constituent_count < 3:
+                continue
+            trend = breadth_trend_map.get(item.sector)
+            suffix = ""
+            if trend is not None and abs(trend.score_delta) >= 0.08:
+                suffix = f" | เทียบรอบก่อน{self._translate_trend_label(trend.trend_label)} {trend.score_delta:+.0%}"
+            lines.append(
+                f"{item.sector} ({item.ticker}) การยืนยันในกลุ่มยังแคบ | แรงกระจาย {item.advancers}/{item.constituent_count} ({item.participation_ratio:.0%}){suffix}"
+            )
+        for signal in leadership_divergence:
+            if signal.divergence_label != "narrow leadership":
+                continue
+            lines.append(
+                f"{signal.label}: {signal.cap_weight_ticker} นำ {signal.equal_weight_ticker} แบบกระจุกตัว | spread 1 เดือน {signal.short_return_spread:+.1%}"
+            )
+        for insight in persistence:
+            if insight.changed_from is None:
+                continue
+            lines.append(
+                f"{insight.sector} ({insight.ticker}) เปลี่ยนจาก {self._translate_sector_stance(insight.changed_from)} เป็น {self._translate_sector_stance(insight.stance)} | delta {insight.score_delta:+.2f}"
+            )
+        return list(dict.fromkeys(lines))[:3]
+
+    def _build_sector_macro_note(
+        self,
+        *,
+        news_impact: Any,
+        leaders: Sequence[SectorRotationSignal],
+        laggards: Sequence[SectorRotationSignal],
+        market_breadth: MarketBreadthDiffusion | None,
+    ) -> str | None:
+        if news_impact is None:
+            return None
+        title = str(getattr(news_impact, "title", "") or "").strip()
+        rationale = str(getattr(news_impact, "rationale", "") or "").strip()
+        if not title and not rationale:
+            return None
+
+        normalized = f"{title} {rationale}".casefold()
+        bias_parts: list[str] = []
+        leader_sectors = {item.sector.casefold() for item in leaders}
+        laggard_sectors = {item.sector.casefold() for item in laggards}
+        if any(keyword in normalized for keyword in ("war", "oil", "energy", "commodity")) and "energy" in leader_sectors:
+            bias_parts.append("หนุนกลุ่มพลังงานมากกว่าตลาดส่วนอื่น")
+        if any(keyword in normalized for keyword in ("inflation", "yield", "rate")) and "technology" in laggard_sectors:
+            bias_parts.append("กดดันหุ้นเติบโตและ valuation สูง")
+        if any(keyword in normalized for keyword in ("inflation", "rate", "bank", "credit")) and "financials" in laggard_sectors:
+            bias_parts.append("กด sentiment ต่อกลุ่มการเงิน")
+        if market_breadth is not None and not market_breadth.rally_confirmed:
+            bias_parts.append("สอดคล้องกับภาวะรับความเสี่ยงต่ำของตลาด")
+
+        source = title or rationale
+        source = source[:160].rstrip()
+        if bias_parts:
+            return f"{source} | ผลต่อ sector: {' / '.join(dict.fromkeys(bias_parts))}"
+        return source
+
+    def _build_sector_rotation_action_lines(
+        self,
+        *,
+        leaders: Sequence[SectorRotationSignal],
+        laggards: Sequence[SectorRotationSignal],
+        market_breadth: MarketBreadthDiffusion | None,
+    ) -> list[str]:
+        actions: list[str] = []
+        weak_market = (
+            market_breadth is not None
+            and market_breadth.breadth_label in {"fragile rally", "mixed tape", "risk-off tape", "broad selloff"}
+        )
+        if weak_market:
+            actions.append("ลดน้ำหนักหุ้น beta สูง และรอให้แรงซื้อกระจายกลับมาก่อนเพิ่มความเสี่ยง")
+        if laggards:
+            laggard_names = ", ".join(item.ticker or item.sector for item in laggards[:2])
+            actions.append(f"ยังไม่ไล่ซื้อ {laggard_names} จนกว่าการยืนยันในกลุ่มจะฟื้น")
+        if leaders:
+            leader_name = leaders[0].ticker or leaders[0].sector
+            if weak_market:
+                actions.append(f"ถ้าจะเปิดสถานะใหม่ ให้เน้นผู้นำสัมพัทธ์อย่าง {leader_name} มากกว่ากลุ่มที่ breadth อ่อน")
+            else:
+                actions.append(f"เฝ้าดู {leader_name} เป็นตัวนำต่อ หากแรงซื้อในกลุ่มยังยืนยันได้")
+        if not actions:
+            actions.append("ถือพอร์ตตามเดิมและรอดูการยืนยันจาก breadth รอบถัดไป")
+        return list(dict.fromkeys(actions))[:3]
+
+    def _format_market_breadth_summary(self, item: MarketBreadthDiffusion) -> str:
+        return (
+            f"{self._translate_market_breadth_label(item.breadth_label)}"
+            f" | หุ้นบวก {item.advancers}/{item.participant_count}"
+            f" | หุ้นลบ {item.decliners}"
+            f" | ดุลแรงซื้อ/ขาย {item.diffusion_score:+.2f}"
+            f" | คะแนนแนวโน้มเฉลี่ย {item.average_trend_score:.2f}"
+        )
+
+    def _format_market_breadth_trend_summary(self, item: MarketBreadthTrend) -> str:
+        return f"{self._translate_trend_label(item.trend_label)} | delta {item.score_delta:+.2f}"
+
+    def _format_sector_rotation_snapshot_signal(
         self,
         signal: SectorRotationSignal,
-        persistence_items: Sequence[SectorPersistenceInsight],
-        breadth_items: Sequence[SectorBreadthInsight],
+        persistence_map: Mapping[str, SectorPersistenceInsight],
+        breadth_map: Mapping[str, SectorBreadthInsight],
+        breadth_trend_map: Mapping[str, SectorBreadthTrend],
     ) -> str:
-        insight = next((item for item in persistence_items if item.sector == signal.sector), None)
-        breadth = next((item for item in breadth_items if item.sector == signal.sector), None)
-        persistence_text = ""
+        parts = [f"{signal.sector} ({signal.ticker})", f"score {signal.trend_score:.2f}"]
+        breadth = breadth_map.get(signal.sector)
+        if breadth is not None:
+            parts.append(f"แรงกระจาย {breadth.advancers}/{breadth.constituent_count} ({breadth.participation_ratio:.0%})")
+            if not breadth.equal_weight_confirmed and breadth.constituent_count >= 3:
+                parts.append("การนำยังแคบ")
+        insight = persistence_map.get(signal.sector)
         if insight is not None:
             unit = "วัน" if insight.regime == "daily" else "รอบ"
-            persistence_text = f" ต่อเนื่อง {insight.streak} {unit}"
-            if insight.changed_from is not None:
-                persistence_text += f" จาก {insight.changed_from}"
-        breadth_text = ""
-        if breadth is not None:
-            breadth_text = (
-                f" | breadth {breadth.advancers}/{breadth.constituent_count}"
-                f" ({breadth.participation_ratio:.0%})"
+            parts.append(f"ต่อเนื่อง {insight.streak} {unit}")
+            if abs(insight.score_delta) >= 0.2:
+                parts.append(f"delta {insight.score_delta:+.2f}")
+        breadth_trend = breadth_trend_map.get(signal.sector)
+        if breadth_trend is not None and abs(breadth_trend.score_delta) >= 0.08:
+            parts.append(f"แรงกระจาย{self._translate_trend_label(breadth_trend.trend_label)} {breadth_trend.score_delta:+.0%}")
+        return " | ".join(parts)
+
+    def _build_market_internals_break_text(
+        self,
+        *,
+        market_breadth: MarketBreadthDiffusion,
+        market_breadth_trend: MarketBreadthTrend | None,
+        sp500_trend: TrendAssessment | None,
+        nasdaq_trend: TrendAssessment | None,
+    ) -> str:
+        lines = [
+            "สัญญาณโครงสร้างตลาดเริ่มอ่อน",
+            "- ดัชนีหลักยังไม่เสียทรง แต่แรงซื้อภายในเริ่มแผ่วลง",
+            (
+                f"- ภาพรวมตลาด: {self._translate_market_breadth_label(market_breadth.breadth_label)}"
+                f" | ดุลแรงซื้อ/ขาย {market_breadth.diffusion_score:+.2f}"
+                f" | คะแนนแนวโน้มเฉลี่ย {market_breadth.average_trend_score:.2f}"
+            ),
+            (
+                f"- S&P 500 score {sp500_trend.score if sp500_trend is not None else 'n/a'}"
+                f" | NASDAQ score {nasdaq_trend.score if nasdaq_trend is not None else 'n/a'}"
+            ),
+        ]
+        if market_breadth_trend is not None:
+            lines.append(
+                f"- เทียบรอบก่อน: {self._translate_trend_label(market_breadth_trend.trend_label)} | delta {market_breadth_trend.score_delta:+.2f}"
             )
-            if not breadth.equal_weight_confirmed:
-                breadth_text += " | narrow leadership"
-        return f"{signal.sector} ({signal.ticker}) score {signal.trend_score:.2f}{persistence_text}{breadth_text}"
+        lines.extend(
+            [
+                "",
+                "Action",
+                "- อย่าไล่ซื้อดัชนีตาม headline จนกว่า breadth ตลาดจะฟื้น",
+                "- เน้นลดความเสี่ยงในกลุ่มที่ breadth อ่อนก่อน",
+            ]
+        )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _translate_market_breadth_label(label: str) -> str:
+        mapping = {
+            "broad rally": "ตลาดขึ้นเป็นวงกว้าง",
+            "constructive but selective": "ตลาดบวกแต่เลือกกลุ่ม",
+            "broad selloff": "ตลาดลงเป็นวงกว้าง",
+            "fragile rally": "รีบาวด์เปราะบาง",
+            "risk-off tape": "ตลาดปิดรับความเสี่ยง",
+            "mixed tape": "ตลาดผสม",
+        }
+        normalized = str(label or "").strip().casefold()
+        return mapping.get(normalized, str(label or "").strip() or "ตลาดผสม")
+
+    @staticmethod
+    def _translate_trend_label(label: str) -> str:
+        mapping = {
+            "stable": "ทรงตัว",
+            "broadening": "ดีขึ้น",
+            "weakening": "อ่อนลง",
+            "narrowing": "แคบลง",
+        }
+        normalized = str(label or "").strip().casefold()
+        return mapping.get(normalized, str(label or "").strip() or "ทรงตัว")
+
+    @staticmethod
+    def _translate_sector_stance(label: str) -> str:
+        mapping = {
+            "overweight": "นำตลาด",
+            "underweight": "อ่อนแรง",
+            "neutral": "กลางตลาด",
+        }
+        normalized = str(label or "").strip().casefold()
+        return mapping.get(normalized, str(label or "").strip() or "กลางตลาด")
 
     def _build_periodic_report_prompt(self, *, report_kind: str, payload: Mapping[str, Any]) -> str:
         sector_lines = self._format_sector_rotation_lines(payload.get("sector_rotation"))
@@ -4039,6 +4226,162 @@ class RecommendationService:
             "watch": "ควรเฝ้าดูและรอจังหวะเพิ่มน้ำหนัก",
             "avoid": "ยังไม่ใช่จังหวะที่ดี",
         }.get(stance, stance)
+
+    @staticmethod
+    def _format_badged_title(badge: str, title: str) -> str:
+        return f"{badge} | {title}"
+
+    @staticmethod
+    def _humanize_confidence_label(label: str) -> str:
+        return {
+            "very_high": "สูงมาก",
+            "high": "สูง",
+            "medium": "ปานกลาง",
+            "low": "ต่ำ",
+        }.get(str(label or "").strip().casefold(), str(label or "").strip() or "n/a")
+
+    @staticmethod
+    def _humanize_risk_level(level: str) -> str:
+        return {
+            "low": "ต่ำ",
+            "moderate": "ปานกลาง",
+            "elevated": "ยกระดับ",
+            "high": "สูง",
+        }.get(str(level or "").strip().casefold(), str(level or "").strip() or "ไม่ระบุ")
+
+    @staticmethod
+    def _humanize_related_bucket(bucket: str) -> str:
+        return {
+            "equities": "หุ้น",
+            "gold": "ทองคำ",
+            "bonds": "ตราสารหนี้",
+            "macro": "มหภาค",
+            "fx": "อัตราแลกเปลี่ยน",
+            "commodities": "สินค้าโภคภัณฑ์",
+        }.get(str(bucket or "").strip().casefold(), str(bucket or "").strip() or "ตลาดรวม")
+
+    @staticmethod
+    def _humanize_earnings_direction(value: str) -> str:
+        return {
+            "positive": "บวก",
+            "negative": "ลบ",
+            "neutral": "ทรงตัว",
+        }.get(str(value or "").strip().casefold(), str(value or "").strip() or "n/a")
+
+    @staticmethod
+    def _humanize_earnings_signal(value: str) -> str:
+        return {
+            "beat": "ดีกว่าคาด",
+            "miss": "ต่ำกว่าคาด",
+            "neutral": "ใกล้เคียงคาด",
+        }.get(str(value or "").strip().casefold(), str(value or "").strip() or "n/a")
+
+    @staticmethod
+    def _humanize_relative_signal(value: str) -> str:
+        return {
+            "above_sector": "ดีกว่า sector",
+            "below_sector": "แย่กว่า sector",
+            "in-line": "ใกล้เคียง sector",
+        }.get(str(value or "").strip().casefold(), str(value or "").strip() or "n/a")
+
+    @staticmethod
+    def _humanize_trend_description(value: str) -> str:
+        return {
+            "improving": "ดีขึ้น",
+            "deteriorating": "อ่อนลง",
+            "neutral": "ทรงตัว",
+            "uptrend": "ขาขึ้น",
+            "downtrend": "ขาลง",
+            "sideways": "แกว่งตัว",
+        }.get(str(value or "").strip().casefold(), str(value or "").strip() or "n/a")
+
+    @staticmethod
+    def _humanize_fcf_quality(value: str) -> str:
+        return {
+            "strong": "แข็งแรง",
+            "weak": "อ่อนแอ",
+            "neutral": "ทรงตัว",
+        }.get(str(value or "").strip().casefold(), str(value or "").strip() or "n/a")
+
+    @staticmethod
+    def _humanize_earnings_quality_label(value: str) -> str:
+        return {
+            "core_business_strong": "กำไรหลักแข็งแรง",
+            "one_off_or_low_quality": "คุณภาพกำไรต่ำหรือมีรายการพิเศษ",
+            "mixed": "คุณภาพกำไรผสม",
+        }.get(str(value or "").strip().casefold(), str(value or "").strip() or "n/a")
+
+    @staticmethod
+    def _humanize_one_off_risk(value: str) -> str:
+        return {
+            "low": "ต่ำ",
+            "medium": "ปานกลาง",
+            "high": "สูง",
+        }.get(str(value or "").strip().casefold(), str(value or "").strip() or "n/a")
+
+    @staticmethod
+    def _humanize_setup_label(value: str) -> str:
+        return {
+            "favorable setup": "setup ค่อนข้างพร้อม",
+            "balanced setup": "setup สมดุล",
+            "fragile setup": "setup เปราะบาง",
+        }.get(str(value or "").strip().casefold(), str(value or "").strip() or "n/a")
+
+    @staticmethod
+    def _humanize_valuation_signal(value: str) -> str:
+        return {
+            "reasonable": "มูลค่าไม่ตึงเกินไป",
+            "stretched": "มูลค่าค่อนข้างตึง",
+            "neutral": "มูลค่ากลาง ๆ",
+        }.get(str(value or "").strip().casefold(), str(value or "").strip() or "n/a")
+
+    @staticmethod
+    def _humanize_expectation_signal(value: str) -> str:
+        return {
+            "high": "ตลาดคาดหวังสูง",
+            "contained": "ตลาดคาดหวังไม่สูงมาก",
+            "moderate": "ตลาดคาดหวังปานกลาง",
+        }.get(str(value or "").strip().casefold(), str(value or "").strip() or "n/a")
+
+    def _build_post_earnings_action(self, item: EarningsInterpretation) -> str:
+        if item.stance == "bullish":
+            if item.one_off_risk == "low" and item.earnings_quality_label == "core_business_strong":
+                return "ติดตามแรงซื้อหลังงบและทยอยเพิ่มน้ำหนักได้ถ้าราคาไม่ไล่ไกลเกินไป"
+            return "มองบวกได้ แต่ควรรอ price action ยืนยันก่อนเพิ่มน้ำหนักมาก"
+        if item.one_off_risk == "high":
+            return "หลีกเลี่ยงการรีบรับมีด และรอให้ตลาดแยกผลบวกจริงออกจากรายการพิเศษก่อน"
+        return "ชะลอการเปิดสถานะใหม่ และรอให้ guidance กับราคาเริ่มนิ่งก่อนประเมินซ้ำ"
+
+    def _build_pre_earnings_action(self, item: PreEarningsRiskSignal) -> str:
+        if item.risk_score >= 7.5:
+            return "ลดขนาดสถานะก่อนงบหรือรอหลังประกาศ เพื่อลดความเสี่ยงจากความคาดหวังที่สูงเกินไป"
+        if item.risk_score >= 6.0:
+            return "ยังไม่ควรไล่ซื้อก่อนงบ และควรกำหนดขนาดสถานะให้เล็กกว่าปกติ"
+        return "ติดตามต่อได้ แต่ควรวางแผนรับความผันผวนในวันประกาศงบ"
+
+    @staticmethod
+    def _build_earnings_calendar_action(days_left: int) -> str:
+        if days_left <= 0:
+            return "ถ้ามีสถานะอยู่แล้ว ให้ทบทวนขนาดความเสี่ยงก่อนตลาดเปิดหรือก่อนประกาศ"
+        if days_left <= 1:
+            return "หลีกเลี่ยงการเพิ่มสถานะใหญ่ก่อนงบ เว้นแต่ยอมรับความผันผวนได้"
+        return "จดวันประกาศไว้ล่วงหน้าและเตรียมแผนรับผลบวกหรือลบหลังงบ"
+
+    def _build_earnings_setup_action(self, item: EarningsSetupCandidate) -> str:
+        if item.setup_score >= 2.4 and item.valuation_signal == "reasonable":
+            return "ติดตามเป็นตัวเลือกก่อนงบได้ แต่ยังควรแบ่งไม้และไม่เปิดสถานะเต็มขนาด"
+        if item.expectation_signal == "high" or item.setup_label == "fragile setup":
+            return "เฝ้าดูต่อมากกว่าลุยก่อนงบ เพราะ downside จากความคาดหวังยังสูง"
+        return "เก็บไว้ใน watchlist ก่อนงบ และรอราคา/volume ยืนยันเพิ่ม"
+
+    def _build_stock_candidate_action(self, candidate: StockCandidate, confidence_score: float, *, mode: str) -> str:
+        if candidate.stance == "buy":
+            if confidence_score >= 0.7:
+                return "ทยอยสะสมได้เป็นไม้เล็ก หากน้ำหนักในพอร์ตยังไม่มากเกินไป"
+            return "เริ่มติดตามจุดเข้าได้ แต่ควรรอราคาและแรงซื้อยืนยันก่อนเพิ่มน้ำหนัก"
+        if mode == "watchlist":
+            return "คงไว้ใน watchlist และรอสัญญาณราคา/ข่าวยืนยันก่อนเพิ่มน้ำหนัก"
+        return "เฝ้าดูต่อและรอจังหวะที่ risk/reward ชัดขึ้นก่อนเปิดสถานะ"
 
     @staticmethod
     def _detect_asset_scope(question: str) -> AssetScope:

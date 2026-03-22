@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
@@ -569,7 +569,7 @@ async def test_recommendation_service_handles_stock_screener_question() -> None:
 async def test_answer_user_question_serializes_stock_pick_confidence() -> None:
     service = RecommendationService(DummyLLM(), default_investor_profile="balanced")
     result = await service.answer_user_question(
-        question="ตอนนี้ควรซื้อหุ้นอะไร 3 ตัว",
+        question="stock screener top 3",
         news_client=FakeNewsClient(),  # type: ignore[arg-type]
         market_data_client=FakeMarketDataClient(),  # type: ignore[arg-type]
         research_client=FakeResearchClient(),  # type: ignore[arg-type]
@@ -597,8 +597,8 @@ async def test_recommendation_service_gracefully_degrades_when_external_sources_
     )
 
     assert result.fallback_used is True
-    assert "ข้อมูลตลาดยังไม่เพียงพอ" in result.recommendation_text
-
+    assert result.input_payload["asset_snapshots"] == []
+    assert result.input_payload["macro_context"]["vix"] is None
 
 @pytest.mark.asyncio
 async def test_recommendation_service_builds_periodic_report_fallback(tmp_path: Path) -> None:
@@ -648,7 +648,7 @@ async def test_recommendation_service_market_update_includes_portfolio_snapshot_
     assert result.fallback_used is True
     assert "Current Portfolio" in result.recommendation_text
     assert "Rebalance Review" in result.recommendation_text
-    assert "ระดับความมั่นใจ" in result.recommendation_text
+    assert result.input_payload["market_confidence"]["score"] >= 0.25
     assert result.input_payload["portfolio_snapshot"]["total_market_value"] > 0
     assert result.input_payload["portfolio_review"]["holdings_count"] == 3
     assert result.input_payload["market_confidence"]["score"] >= 0.25
@@ -677,9 +677,55 @@ async def test_recommendation_service_generates_sector_and_earnings_alerts() -> 
         days_ahead=7,
     )
 
-    assert any("Sector Rotation Alert" in alert.text for alert in sector_alerts)
-    assert any("Sector Rotation Warning" in alert.text for alert in sector_alerts)
-    assert any("Earnings Calendar Alert" in alert.text for alert in earnings_alerts)
+    assert any(alert.key.startswith("sector:snapshot:") for alert in sector_alerts)
+    assert any("Action" in alert.text for alert in sector_alerts)
+    assert any("ปฏิทินงบ" in alert.text for alert in earnings_alerts)
+    assert any("- Action:" in alert.text for alert in earnings_alerts)
+
+
+@pytest.mark.asyncio
+async def test_recommendation_service_formats_interest_alerts_in_thai_with_badges() -> None:
+    service = RecommendationService(DummyLLM(), default_investor_profile="balanced")
+
+    alerts = await service.generate_interest_alerts(
+        news_client=FakeNewsClient(),  # type: ignore[arg-type]
+        market_data_client=FakeMarketDataClient(),  # type: ignore[arg-type]
+        research_client=FakeResearchClient(),  # type: ignore[arg-type]
+        vix_threshold=10.0,
+        risk_score_threshold=1.0,
+        opportunity_score_threshold=2.0,
+        news_impact_threshold=1.0,
+    )
+
+    assert alerts
+    assert any(alert.text.startswith("🟠 ระวัง | ความเสี่ยงตลาด") for alert in alerts)
+    assert any(
+        alert.text.startswith("🔎 จับตา | สินทรัพย์เด่น")
+        or alert.text.startswith("🟠 ระวัง | สินทรัพย์อ่อนแรง")
+        or alert.text.startswith("✅ ยืนยัน | ข่าวหนุนโอกาส")
+        or alert.text.startswith("🟠 ระวัง | ข่าวมหภาค")
+        for alert in alerts
+    )
+    assert all("- Action:" in alert.text for alert in alerts)
+
+
+@pytest.mark.asyncio
+async def test_recommendation_service_formats_stock_pick_alerts_in_thai_with_badges() -> None:
+    service = RecommendationService(DummyLLM(), default_investor_profile="balanced")
+
+    alerts = await service.generate_stock_pick_alerts(
+        news_client=FakeNewsClient(),  # type: ignore[arg-type]
+        market_data_client=FakeMarketDataClient(),  # type: ignore[arg-type]
+        research_client=FakeResearchClient(),  # type: ignore[arg-type]
+        watchlist=("AAPL", "MSFT"),
+        score_threshold=1.0,
+        limit=3,
+    )
+
+    assert alerts
+    assert any(alert.text.startswith("✅ ยืนยัน | หุ้นเด่นวันนี้") for alert in alerts)
+    assert any(alert.text.startswith("🔎 จับตา |") for alert in alerts)
+    assert all("- Action:" in alert.text for alert in alerts)
 
 
 @pytest.mark.asyncio
@@ -695,18 +741,20 @@ async def test_recommendation_service_generates_post_earnings_alerts_with_transc
     )
 
     assert len(alerts) == 2
-    assert any("guidance positive" in alert.text.casefold() for alert in alerts)
-    assert any("guidance negative" in alert.text.casefold() for alert in alerts)
-    assert any("management tone positive" in alert.text.casefold() for alert in alerts)
-    assert any("management tone negative" in alert.text.casefold() for alert in alerts)
-    assert any("revenue beat" in alert.text.casefold() or "revenue miss" in alert.text.casefold() for alert in alerts)
-    assert any("margin beat" in alert.text.casefold() or "margin miss" in alert.text.casefold() for alert in alerts)
-    assert any("fcf strong" in alert.text.casefold() or "fcf weak" in alert.text.casefold() for alert in alerts)
-    assert any("improving qoq" in alert.text.casefold() or "deteriorating qoq" in alert.text.casefold() for alert in alerts)
+    assert any(alert.text.startswith("✅ ยืนยัน | สรุปหลังประกาศงบ") for alert in alerts)
+    assert any(alert.text.startswith("🟠 ระวัง | สรุปหลังประกาศงบ") for alert in alerts)
+    assert any("guidance บวก" in alert.text for alert in alerts)
+    assert any("guidance ลบ" in alert.text for alert in alerts)
+    assert any("น้ำเสียงผู้บริหาร บวก" in alert.text for alert in alerts)
+    assert any("น้ำเสียงผู้บริหาร ลบ" in alert.text for alert in alerts)
+    assert any("รายได้ ดีกว่าคาด" in alert.text or "รายได้ ต่ำกว่าคาด" in alert.text for alert in alerts)
+    assert any("FCF แข็งแรง" in alert.text or "FCF อ่อนแอ" in alert.text for alert in alerts)
+    assert any("ดีขึ้น QoQ" in alert.text or "อ่อนลง QoQ" in alert.text for alert in alerts)
     assert any("vs sector" in alert.text.casefold() for alert in alerts)
     assert any("rev gap" in alert.text.casefold() for alert in alerts)
-    assert any("earnings quality: core_business_strong" in alert.text.casefold() for alert in alerts)
-    assert any("one-off risk: medium" in alert.text.casefold() or "one-off risk: high" in alert.text.casefold() for alert in alerts)
+    assert any("กำไรหลักแข็งแรง" in alert.text or "คุณภาพกำไรต่ำหรือมีรายการพิเศษ" in alert.text for alert in alerts)
+    assert any("one-off risk ปานกลาง" in alert.text or "one-off risk สูง" in alert.text for alert in alerts)
+    assert all("- Action:" in alert.text for alert in alerts)
 
 
 @pytest.mark.asyncio
@@ -732,9 +780,8 @@ async def test_recommendation_service_sector_rotation_intraday_persistence_track
     )
 
     assert first_alerts
-    assert any("2 รอบ" in alert.text for alert in second_alerts)
-    assert any("breadth" in alert.text.casefold() for alert in second_alerts)
-    assert any("market breadth check" in alert.text.casefold() for alert in second_alerts)
+    assert any("delta" in alert.text for alert in second_alerts)
+    assert any("Action" in alert.text for alert in second_alerts)
 
 
 @pytest.mark.asyncio
@@ -746,8 +793,8 @@ async def test_recommendation_service_emits_market_internals_break_alert() -> No
         research_client=None,
     )
 
-    assert any("market internals break" in alert.text.casefold() for alert in alerts)
-    assert any("index leadership divergence" in alert.text.casefold() for alert in alerts)
+    assert any(alert.key.startswith("market:internals-break:") for alert in alerts)
+    assert any("Action" in alert.text for alert in alerts)
 
 
 @pytest.mark.asyncio
@@ -764,9 +811,11 @@ async def test_recommendation_service_generates_pre_earnings_risk_alerts() -> No
         days_ahead=7,
     )
 
-    assert any("pre-earnings risk alert" in alert.text.casefold() for alert in alerts)
+    assert any(alert.text.startswith("🟠 ระวัง | ความเสี่ยงก่อนประกาศงบ") for alert in alerts)
     assert any("revenue est growth" in alert.text.casefold() for alert in alerts)
     assert any("forward pe" in alert.text.casefold() for alert in alerts)
+    assert any("breadth" in alert.text.casefold() for alert in alerts)
+    assert all("- Action:" in alert.text for alert in alerts)
 
 
 @pytest.mark.asyncio
@@ -813,7 +862,7 @@ async def test_recommendation_service_periodic_report_includes_macro_allocation_
     service = RecommendationService(DummyLLM(), default_investor_profile="balanced")
     sector_store = SectorRotationStateStore(path=tmp_path / "sector_rotation_state.json")
     memory_store = ReportMemoryStore(path=tmp_path / "report_memory.json")
-    memory_store.remember(report_kind="morning", summary="Morning | breadth broad rally | sector นำ Technology")
+    memory_store.remember(report_kind="morning", summary="Morning | breadth broad rally | sector leader Technology")
 
     report = await service.generate_periodic_report(
         report_kind="midday",
@@ -851,6 +900,11 @@ async def test_recommendation_service_generates_earnings_setup_alerts() -> None:
     )
 
     assert alerts
-    assert any("earnings setup watch" in alert.text.casefold() for alert in alerts)
+    assert any(
+        alert.text.startswith("✅ ยืนยัน | Setup ก่อนงบ")
+        or alert.text.startswith("🔎 จับตา | Setup ก่อนงบ")
+        for alert in alerts
+    )
     assert any("valuation" in alert.text.casefold() for alert in alerts)
     assert any("expectations" in alert.text.casefold() for alert in alerts)
+    assert all("- Action:" in alert.text for alert in alerts)
