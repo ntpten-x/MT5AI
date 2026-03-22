@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: invest-advisor-bot
+    runtime: python
+    buildCommand: pip install -e .
+    startCommand: python -m invest_advisor_bot.main
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.5
+      - key: HEALTH_CHECK_ENABLED
+        value: "true"
+      - key: HEALTH_CHECK_HOST
+        value: 0.0.0.0
+      - key: HEALTH_CHECK_PORT
+        value: "10000"
+      - key: JOBS_ENABLED
+        value: "true"
+      - key: DEFAULT_INVESTOR_PROFILE
+        value: conservative

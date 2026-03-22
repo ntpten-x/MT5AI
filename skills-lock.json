@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "skills": {
+    "blogwatcher": {
+      "source": "openclaw/openclaw",
+      "sourceType": "github",
+      "computedHash": "f74dd900af73d9e8887dde74d939a59b65229b6d05bf6abfcdaa0508e08fad8c"
+    },
+    "coding-agent": {
+      "source": "openclaw/openclaw",
+      "sourceType": "github",
+      "computedHash": "17667d3d9d3a7965a3992755b26223cc52f7d3c3c0d3e95538417752a802d2cc"
+    },
+    "github": {
+      "source": "openclaw/openclaw",
+      "sourceType": "github",
+      "computedHash": "78c25ef4dbe70f5ec149b7a5d55aadd4b2cb1aa6246c0cfcea66d316bdb5b171"
+    },
+    "gog": {
+      "source": "openclaw/openclaw",
+      "sourceType": "github",
+      "computedHash": "e428c2ff5b716ac41da72c3218ddf494b0b47f1997f03d21677097d7f07fd12d"
+    },
+    "healthcheck": {
+      "source": "openclaw/openclaw",
+      "sourceType": "github",
+      "computedHash": "53ae8b581b83e4c222d332372e826d8524196641755ee432fffc72fcef50168e"
+    },
+    "model-usage": {
+      "source": "openclaw/openclaw",
+      "sourceType": "github",
+      "computedHash": "ba8e5a28704806436a891b140f42c794faaf1df5fcadc2f76d877f77d99facba"
+    },
+    "node-connect": {
+      "source": "openclaw/openclaw",
+      "sourceType": "github",
+      "computedHash": "2ef4f36510e39d455d5c922fa19bf6b611451d3d0206607097a61a5e2448336c"
+    },
+    "notion": {
+      "source": "openclaw/openclaw",
+      "sourceType": "github",
+      "computedHash": "ad9238421952899e618c4fbe3e786029d41655e6f69fbe0c19e636ba8905a4bc"
+    },
+    "openai-image-gen": {
+      "source": "openclaw/openclaw",
+      "sourceType": "github",
+      "computedHash": "2fd26d4893d7c08fc03f3126b54a7a9aa5e87ea9a293771376948c81bdc87ee0"
+    },
+    "session-logs": {
+      "source": "openclaw/openclaw",
+      "sourceType": "github",
+      "computedHash": "66226da5840d5e85c69ffcdad29c7bf23c260fbbcf3782e663d791500899e2f4"
+    },
+    "skill-creator": {
+      "source": "openclaw/openclaw",
+      "sourceType": "github",
+      "computedHash": "73b0cad4e0b65c7c29eff3f89f16a47033365637ff4d61503b44f7f5deceeff5"
+    },
+    "summarize": {
+      "source": "openclaw/openclaw",
+      "sourceType": "github",
+      "computedHash": "3d4b495c2e6071506ce5e57d4908eff37a3f5506d236f94836e0535c235f9b27"
+    },
+    "tmux": {
+      "source": "openclaw/openclaw",
+      "sourceType": "github",
+      "computedHash": "5c7ec7158f7d7283befbac1ada02ab35fd61cf1c8683fc9adab8674317fa116a"
+    },
+    "xurl": {
+      "source": "openclaw/openclaw",
+      "sourceType": "github",
+      "computedHash": "1aa3fee95c5fbcb0b0b98301a4058d6f67ec97c11b6d175178b8f3371e9236c3"
+    }
+  }
+}
