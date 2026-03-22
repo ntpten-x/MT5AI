@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import asyncio
+import importlib
 from contextlib import suppress
 
 from loguru import logger
@@ -55,30 +56,31 @@ def configure_logging(settings: Settings) -> None:
     )
 
 
-def build_application(settings: Settings):
+def build_application(settings: Settings, *, database_url: str | None = None):
+    effective_database_url = settings.database_url if database_url is None else database_url
     alert_state_store = AlertStateStore(
         path=settings.alert_state_path,
         suppression_minutes=settings.alert_suppression_minutes,
-        database_url=settings.database_url,
+        database_url=effective_database_url,
     )
-    user_state_store = UserStateStore(path=settings.user_state_path, database_url=settings.database_url)
+    user_state_store = UserStateStore(path=settings.user_state_path, database_url=effective_database_url)
     portfolio_state_store = PortfolioStateStore(
         path=settings.portfolio_state_path,
-        database_url=settings.database_url,
+        database_url=effective_database_url,
     )
     sector_rotation_state_store = SectorRotationStateStore(
         path=settings.sector_rotation_state_path,
-        database_url=settings.database_url,
+        database_url=effective_database_url,
     )
-    report_memory_store = ReportMemoryStore(path=settings.report_memory_path, database_url=settings.database_url)
+    report_memory_store = ReportMemoryStore(path=settings.report_memory_path, database_url=effective_database_url)
     runtime_history_store = RuntimeHistoryStore(
         path=settings.runtime_history_path,
-        database_url=settings.database_url,
+        database_url=effective_database_url,
         retention_days=settings.runtime_history_retention_days,
     )
     backup_manager = BackupManager(
         backup_dir=settings.backup_dir,
-        database_url=settings.database_url,
+        database_url=effective_database_url,
         retention_days=settings.backup_retention_days,
     )
     diagnostics.attach_history_store(runtime_history_store)
@@ -172,10 +174,25 @@ def build_application(settings: Settings):
         earnings_result_lookback_days=settings.earnings_result_lookback_days,
         sector_rotation_min_streak=settings.sector_rotation_min_streak,
         stock_pick_evaluation_horizon_days=settings.stock_pick_evaluation_horizon_days,
-        database_url=settings.database_url,
+        database_url=effective_database_url,
         stock_pick_evaluation_interval_minutes=settings.stock_pick_evaluation_interval_minutes,
         backup_interval_hours=settings.backup_interval_hours,
     )
+
+
+def resolve_database_url(settings: Settings) -> str:
+    database_url = settings.database_url.strip()
+    if not database_url:
+        return ""
+    try:
+        importlib.import_module("psycopg")
+    except ImportError as exc:
+        logger.warning(
+            "DATABASE_URL is configured but psycopg is unavailable; falling back to file-backed state: {}",
+            exc,
+        )
+        return ""
+    return database_url
 
 
 def main() -> int:
@@ -187,10 +204,11 @@ def main() -> int:
         logger.error("Configuration error: {}", exc)
         return 2
 
+    effective_database_url = resolve_database_url(settings)
     configure_logging(settings)
     log_event(
         "runtime_boot",
-        database_backend="postgres" if settings.database_url.strip() else "file",
+        database_backend="postgres" if effective_database_url else "file",
         jobs_enabled=settings.jobs_enabled,
         health_check_enabled=settings.health_check_enabled,
     )
@@ -212,7 +230,7 @@ def main() -> int:
     ):
         logger.warning("Rotate any token/API key that was previously shared or used for testing before production deploy")
 
-    application = build_application(settings)
+    application = build_application(settings, database_url=effective_database_url)
     logger.info("Starting Telegram investment advisor bot")
 
     if settings.health_check_enabled:
