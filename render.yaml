@@ -2,7 +2,7 @@ services:
   - type: web
     name: invest-advisor-bot
     runtime: python
-    buildCommand: pip install -e .
+    buildCommand: pip install -r requirements.txt -e .
     startCommand: python -m invest_advisor_bot.main
     healthCheckPath: /health
     autoDeploy: true
