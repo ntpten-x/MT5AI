@@ -59,7 +59,7 @@ class PortfolioRebalanceReview:
 _BASE_ALLOCATIONS: dict[str, dict[AllocationMixCategory, int]] = {
     "conservative": {"cash": 22, "gold": 18, "core_etf": 25, "growth": 10, "defensive": 25},
     "balanced": {"cash": 14, "gold": 12, "core_etf": 33, "growth": 21, "defensive": 20},
-    "growth": {"cash": 8, "gold": 8, "core_etf": 28, "growth": 38, "defensive": 18},
+    "growth": {"cash": 6, "gold": 6, "core_etf": 26, "growth": 46, "defensive": 16},
 }
 
 _CATEGORY_ASSETS: dict[AllocationMixCategory, tuple[str, ...]] = {

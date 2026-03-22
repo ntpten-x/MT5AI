@@ -26,6 +26,7 @@ from invest_advisor_bot.providers.news_client import NewsClient
 from invest_advisor_bot.providers.research_client import ResearchClient
 from invest_advisor_bot.observability import log_event
 from invest_advisor_bot.runtime_diagnostics import diagnostics
+from invest_advisor_bot.analysis.portfolio_profile import normalize_profile_name
 from invest_advisor_bot.services.recommendation_service import AssetScope, FallbackVerbosity, RecommendationService
 
 BOT_SERVICES_KEY: Final[str] = "bot_services"
@@ -149,7 +150,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "สวัสดีครับ ผมคือ Invest Advisor Bot บน Telegram\n"
         "ผมช่วยวิเคราะห์หุ้นสหรัฐ ETF ทองคำ ข่าวเศรษฐกิจ และภาวะมหภาค เพื่อสรุปแนวทางจัดพอร์ตแบบนักลงทุนที่เน้นรักษาและเติบโตทรัพย์สิน\n\n"
         f"โปรไฟล์ปัจจุบันของคุณ: {current_profile.title_th}\n"
-        "ถ้าต้องการเปลี่ยนโปรไฟล์ ใช้ /profile conservative, /profile balanced หรือ /profile growth\n\n"
+        "ถ้าต้องการเปลี่ยนโปรไฟล์ ใช้ /profile conservative, /profile balanced, /profile growth หรือ /profile aggressive\n\n"
         "ระบบสามารถสแกนตลาดอัตโนมัติและส่ง Morning / Midday / Closing reports,"
         " หุ้นเด่น, sector rotation, earnings และข่าวสำคัญเข้า report chat ได้เอง\n\n"
         "ตัวอย่างคำถาม\n"
@@ -180,7 +181,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "คำสั่งหลัก\n"
             "/start เปิดเมนูหลัก\n/help ดูวิธีใช้งาน\n/profile ดูหรือตั้งโปรไฟล์นักลงทุน\n/portfolio ดูพอร์ตที่บันทึกไว้\n/holdadd เพิ่มหรืออัปเดต holding\n/holdremove ลบ holding\n/watchlist ดู watchlist\n/watchadd เพิ่มหุ้นเข้ารายการติดตาม\n/watchremove ลบหุ้นออกจาก watchlist\n/prefs ดูหรือปรับ preferences\n/report_now ขอรายงานล่าสุดทันที\n/scorecard ดูผลหุ้นที่ระบบเคยแนะนำ\n/dashboard ดู burn-in และ evaluation dashboard\n/backup_now สร้าง backup ทันที\n/market_update สรุปตลาดและแนวทางจัดพอร์ตล่าสุด\n\n"
             "ระบบอัตโนมัติ\n- Morning / Midday / Closing reports\n- Stock pick alerts\n- Sector rotation alerts\n- Earnings calendar alerts\n\n"
-            "โปรไฟล์ที่รองรับ\n- conservative: รักษาเงินต้น\n- balanced: สมดุล\n- growth: เติบโต\n\n"
+            "โปรไฟล์ที่รองรับ\n- conservative: รักษาเงินต้น\n- balanced: สมดุล\n- growth: เติบโต\n- aggressive: alias ของ growth สำหรับสายรุก\n\n"
             "ตัวอย่างคำถาม\n- วิเคราะห์ทองคำแบบรักษาเงินต้น\n- ขอพอร์ต ETF สำหรับคนรับความเสี่ยงปานกลาง\n- ช่วยสรุปหุ้นสหรัฐแบบสั้นมาก"
             "\n- ตอนนี้ควรซื้อหุ้นอะไร 5 ตัว\n- วิเคราะห์ AAPL และ MSFT ให้หน่อย"
         ),
@@ -205,14 +206,14 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 f"โปรไฟล์ปัจจุบัน: {profile.title_th}\n"
                 f"เป้าหมาย: {profile.objective}\n"
                 f"ความเสี่ยง: {profile.risk_summary}\n\n"
-                "ตั้งค่าใหม่ได้ด้วย\n- /profile conservative\n- /profile balanced\n- /profile growth"
+                "ตั้งค่าใหม่ได้ด้วย\n- /profile conservative\n- /profile balanced\n- /profile growth\n- /profile aggressive"
             ),
         )
         return
 
-    profile_arg = context.args[0].strip().casefold()
+    profile_arg = normalize_profile_name(context.args[0].strip(), default=services.recommendation_service.default_investor_profile)
     if profile_arg not in {"conservative", "balanced", "growth"}:
-        await _reply_text(message, "โปรไฟล์ที่รองรับคือ conservative, balanced และ growth")
+        await _reply_text(message, "โปรไฟล์ที่รองรับคือ conservative, balanced, growth และ aggressive")
         return
 
     profile = services.recommendation_service.set_investor_profile(conversation_key=conversation_key, profile_name=profile_arg)

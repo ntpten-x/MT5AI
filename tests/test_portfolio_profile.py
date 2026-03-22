@@ -4,13 +4,15 @@ from invest_advisor_bot.analysis.portfolio_profile import (
     build_portfolio_plan,
     detect_investor_profile,
     get_investor_profile,
+    normalize_profile_name,
 )
 
 
-def test_detect_investor_profile_handles_thai_keywords() -> None:
+def test_detect_investor_profile_handles_thai_and_alias_keywords() -> None:
     assert detect_investor_profile("ช่วยจัดพอร์ตแบบรักษาเงินต้น") == "conservative"
     assert detect_investor_profile("อยากได้พอร์ตเติบโต เสี่ยงสูงได้") == "growth"
     assert detect_investor_profile("ขอแบบสมดุลระยะยาว") == "balanced"
+    assert normalize_profile_name("aggressive-growth", default="balanced") == "growth"
 
 
 def test_build_portfolio_plan_prefers_defensive_mix_in_risk_off() -> None:

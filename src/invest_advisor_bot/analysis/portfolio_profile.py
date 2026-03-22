@@ -9,7 +9,7 @@ MarketRegime = Literal["risk_off", "neutral", "risk_on"]
 _BASE_ALLOCATIONS: dict[InvestorProfileName, dict[str, int]] = {
     "conservative": {"us_equity": 25, "gold": 20, "bonds": 35, "cash": 20},
     "balanced": {"us_equity": 45, "gold": 15, "bonds": 25, "cash": 15},
-    "growth": {"us_equity": 65, "gold": 10, "bonds": 10, "cash": 15},
+    "growth": {"us_equity": 72, "gold": 8, "bonds": 5, "cash": 15},
 }
 
 _PROFILE_DETAILS: dict[InvestorProfileName, tuple[str, str, str, str]] = {
@@ -98,6 +98,8 @@ def normalize_profile_name(value: str | None, *, default: InvestorProfileName = 
         "moderate": "balanced",
         "growth": "growth",
         "aggressive": "growth",
+        "aggressive-growth": "growth",
+        "aggressive_growth": "growth",
         "high-risk": "growth",
     }
     return aliases.get(normalized, default)  # type: ignore[return-value]
@@ -129,6 +131,8 @@ def detect_investor_profile(text: str | None) -> InvestorProfileName | None:
         "growth",
         "aggressive",
         "high risk",
+        "high conviction",
+        "profit",
     )
     if any(keyword in normalized for keyword in conservative_keywords):
         return "conservative"

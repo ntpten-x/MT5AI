@@ -667,7 +667,7 @@ class RecommendationService:
             portfolio_snapshot=portfolio_snapshot,
             question="สรุป Daily Intelligence Report สำหรับนักลงทุนที่ต้องการรักษาและเติบโตทรัพย์สิน",
             fallback_verbosity_override="medium",
-            investor_profile_name="conservative",
+            investor_profile_name=self.default_investor_profile,
         )
 
     async def generate_periodic_report(
@@ -783,6 +783,7 @@ class RecommendationService:
             "midday": "สรุปรายงานระหว่างวัน เน้นการเปลี่ยนแรงนำของ sector หุ้นเด่น และสิ่งที่ต้องจับตาช่วงครึ่งหลัง",
             "closing": "สรุปรายงานหลังปิดตลาด เน้น sector rotation หุ้นเด่น และ earnings ที่ต้องติดตามรอบถัดไป",
         }[report_kind]
+        report_profile = get_investor_profile(self.default_investor_profile)
         payload = self._build_payload(
             news=news,
             market_data=market_data,
@@ -792,7 +793,7 @@ class RecommendationService:
             portfolio_snapshot=portfolio_snapshot,
             asset_scope="all",
             question=question,
-            investor_profile=get_investor_profile("conservative"),
+            investor_profile=report_profile,
         )
         payload["sector_rotation"] = [self._serialize_sector_rotation(item) for item in sector_rotation[:5]]
         payload["sector_rotation_persistence_daily"] = [
@@ -830,11 +831,11 @@ class RecommendationService:
         llm_response = await self.llm_client.generate_text(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            metadata={"service": "periodic_report", "language": "th", "profile": "conservative", "scope": "all"},
+            metadata={"service": "periodic_report", "language": "th", "profile": report_profile.name, "scope": "all"},
         )
         if llm_response is None:
             fallback = self._build_periodic_report_fallback(report_kind=report_kind, payload=payload)
-            log_event("llm_fallback_used", service="periodic_report", report_kind=report_kind, profile="conservative")
+            log_event("llm_fallback_used", service="periodic_report", report_kind=report_kind, profile=report_profile.name)
             diagnostics.record_response(service="periodic_report", fallback_used=True)
             if report_memory_store is not None:
                 report_memory_store.remember(
@@ -853,7 +854,7 @@ class RecommendationService:
                 report_kind=report_kind,
                 summary=self._build_report_memory_summary(report_kind=report_kind, payload=payload),
             )
-        log_event("llm_response_used", service="periodic_report", report_kind=report_kind, model=llm_response.model, profile="conservative")
+        log_event("llm_response_used", service="periodic_report", report_kind=report_kind, model=llm_response.model, profile=report_profile.name)
         diagnostics.record_response(service="periodic_report", fallback_used=False)
         return RecommendationResult(
             recommendation_text=llm_response.text,
@@ -920,6 +921,7 @@ class RecommendationService:
             holdings=(),
         )
 
+        alert_profile = get_investor_profile(self.default_investor_profile)
         payload = self._build_payload(
             news=news,
             market_data=market_data,
@@ -929,7 +931,7 @@ class RecommendationService:
             portfolio_snapshot=portfolio_snapshot,
             asset_scope="all",
             question="continuous market scan",
-            investor_profile=get_investor_profile("conservative"),
+            investor_profile=alert_profile,
         )
         asset_snapshots = payload.get("asset_snapshots", [])
         if not isinstance(asset_snapshots, list):

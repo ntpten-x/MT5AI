@@ -18,7 +18,7 @@ def test_settings_accept_runtime_values(tmp_path: Path, monkeypatch: pytest.Monk
     settings.validate_runtime()
     assert settings.llm_available() is False
     assert settings.research_available() is False
-    assert settings.default_investor_profile == "conservative"
+    assert settings.default_investor_profile == "growth"
     assert settings.project_root.name == "MT5AI"
 
 

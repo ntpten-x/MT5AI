@@ -99,7 +99,7 @@ class Settings(BaseSettings):
     market_news_limit: int = Field(default=5, validation_alias="MARKET_NEWS_LIMIT")
     market_cache_ttl_seconds: int = Field(default=900, validation_alias="MARKET_CACHE_TTL_SECONDS")
     news_cache_ttl_seconds: int = Field(default=900, validation_alias="NEWS_CACHE_TTL_SECONDS")
-    default_investor_profile: str = Field(default="conservative", validation_alias="DEFAULT_INVESTOR_PROFILE")
+    default_investor_profile: str = Field(default="growth", validation_alias="DEFAULT_INVESTOR_PROFILE")
     alert_state_path: Path = Field(default=DEFAULT_ALERT_STATE_PATH, validation_alias="ALERT_STATE_PATH")
     user_state_path: Path = Field(default=DEFAULT_USER_STATE_PATH, validation_alias="USER_STATE_PATH")
     portfolio_state_path: Path = Field(default=DEFAULT_PORTFOLIO_STATE_PATH, validation_alias="PORTFOLIO_STATE_PATH")
@@ -210,7 +210,7 @@ class Settings(BaseSettings):
     @field_validator("default_investor_profile")
     @classmethod
     def validate_default_investor_profile(cls, value: str) -> str:
-        normalized = normalize_profile_name(value, default="conservative")
+        normalized = normalize_profile_name(value, default="growth")
         if normalized not in {"conservative", "balanced", "growth"}:
             raise ValueError("DEFAULT_INVESTOR_PROFILE must be conservative, balanced, or growth")
         return normalized
