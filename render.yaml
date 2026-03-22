@@ -9,6 +9,24 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.10.5
+      - key: TELEGRAM_TOKEN
+        sync: false
+      - key: TELEGRAM_REPORT_CHAT_ID
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: ALPHA_VANTAGE_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GITHUB_MODELS_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: EXA_API_KEY
+        sync: false
       - key: HEALTH_CHECK_ENABLED
         value: "true"
       - key: HEALTH_CHECK_HOST

@@ -183,6 +183,7 @@ def main() -> int:
         settings = get_settings()
         settings.validate_runtime()
     except Exception as exc:
+        print(f"Configuration error: {exc}", file=sys.stderr, flush=True)
         logger.error("Configuration error: {}", exc)
         return 2
 
