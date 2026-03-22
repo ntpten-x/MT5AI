@@ -1,2 +1,3 @@
 [console_scripts]
 invest-advisor-bot = invest_advisor_bot.main:main
+invest-advisor-restore-backup = invest_advisor_bot.backup_restore:main

@@ -11,7 +11,6 @@ Requires-Dist: loguru>=0.7.2
 Requires-Dist: lxml>=5.3.0
 Requires-Dist: numpy>=1.26.4
 Requires-Dist: pandas>=2.2.3
-Requires-Dist: pandas-datareader>=0.10.0
 Requires-Dist: psycopg[binary]>=3.2.9
 Requires-Dist: pydantic>=2.9.2
 Requires-Dist: pydantic-settings>=2.6.1

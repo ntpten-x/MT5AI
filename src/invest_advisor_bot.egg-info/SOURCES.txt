@@ -1,9 +1,11 @@
 README.md
 pyproject.toml
 src/invest_advisor_bot/__init__.py
+src/invest_advisor_bot/backup_restore.py
 src/invest_advisor_bot/config.py
 src/invest_advisor_bot/main.py
 src/invest_advisor_bot/observability.py
+src/invest_advisor_bot/runtime_diagnostics.py
 src/invest_advisor_bot/universe.py
 src/invest_advisor_bot.egg-info/PKG-INFO
 src/invest_advisor_bot.egg-info/SOURCES.txt
@@ -13,6 +15,7 @@ src/invest_advisor_bot.egg-info/requires.txt
 src/invest_advisor_bot.egg-info/top_level.txt
 src/invest_advisor_bot/analysis/__init__.py
 src/invest_advisor_bot/analysis/asset_ranking.py
+src/invest_advisor_bot/analysis/confidence_scoring.py
 src/invest_advisor_bot/analysis/macro_regime.py
 src/invest_advisor_bot/analysis/news_impact.py
 src/invest_advisor_bot/analysis/portfolio_allocation.py
@@ -23,11 +26,14 @@ src/invest_advisor_bot/analysis/technical_indicators.py
 src/invest_advisor_bot/analysis/trend_engine.py
 src/invest_advisor_bot/bot/__init__.py
 src/invest_advisor_bot/bot/alert_state.py
+src/invest_advisor_bot/bot/backup_manager.py
 src/invest_advisor_bot/bot/handlers.py
 src/invest_advisor_bot/bot/health_check.py
 src/invest_advisor_bot/bot/jobs.py
+src/invest_advisor_bot/bot/portfolio_state.py
 src/invest_advisor_bot/bot/postgres_state.py
 src/invest_advisor_bot/bot/report_memory_state.py
+src/invest_advisor_bot/bot/runtime_history_store.py
 src/invest_advisor_bot/bot/sector_rotation_state.py
 src/invest_advisor_bot/bot/telegram_app.py
 src/invest_advisor_bot/bot/user_state.py
@@ -45,8 +51,10 @@ tests/test_market_data_client.py
 tests/test_monitoring_engines.py
 tests/test_news_client.py
 tests/test_portfolio_profile.py
+tests/test_portfolio_state.py
 tests/test_recommendation_service.py
 tests/test_research_client.py
+tests/test_runtime_integration.py
 tests/test_stock_screener.py
 tests/test_technical_indicators.py
 tests/test_trend_engine.py

@@ -145,3 +145,54 @@ async def test_market_data_client_falls_back_to_yfinance_history_when_alpha_vant
 
     assert len(bars) == 1
     assert calls == {"alpha": 1, "yfinance": 1}
+
+
+def test_market_data_client_macro_context_uses_fred_csv_without_pandas_datareader(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = MarketDataClient(cache_ttl_seconds=900)
+
+    class FakeTicker:
+        def __init__(self, ticker: str) -> None:
+            self.fast_info = {
+                "lastPrice": {
+                    "^VIX": 17.5,
+                    "^TNX": 4.33,
+                }[ticker]
+            }
+
+    class FakeResponse:
+        text = "\n".join(
+            [
+                "DATE,CPIAUCSL",
+                "2024-01-01,300",
+                "2024-02-01,301",
+                "2024-03-01,302",
+                "2024-04-01,303",
+                "2024-05-01,304",
+                "2024-06-01,305",
+                "2024-07-01,306",
+                "2024-08-01,307",
+                "2024-09-01,308",
+                "2024-10-01,309",
+                "2024-11-01,310",
+                "2024-12-01,311",
+                "2025-01-01,312",
+            ]
+        )
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+    class FakeHttpClient:
+        @staticmethod
+        def get(*args, **kwargs) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr("invest_advisor_bot.providers.market_data_client.yf.Ticker", FakeTicker)
+    monkeypatch.setattr(client, "_get_http_client", lambda: FakeHttpClient())
+
+    assert client._get_macro_context_sync() == {
+        "vix": 17.5,
+        "tnx": 4.33,
+        "cpi_yoy": 4.0,
+    }
