@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from html import unescape
 from threading import RLock
 from typing import Any, Mapping, Sequence
 
@@ -11,8 +13,21 @@ import httpx
 from cachetools import TTLCache
 from loguru import logger
 
+from invest_advisor_bot.runtime_diagnostics import diagnostics
+
 
 DEFAULT_RESEARCH_PROVIDER_ORDER: tuple[str, ...] = ("tavily", "exa")
+_TRANSCRIPT_PAGE_HINTS: tuple[str, ...] = (
+    "transcript",
+    "earnings call",
+    "conference call",
+    "prepared remarks",
+    "operator",
+    "question-and-answer",
+    "guidance",
+    "outlook",
+    "investor relations",
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -45,12 +60,14 @@ class ResearchClient:
             dict.fromkeys(item.strip().casefold() for item in provider_order if item and item.strip())
         ) or DEFAULT_RESEARCH_PROVIDER_ORDER
         self.timeout = timeout
+        self.cache_ttl_seconds = cache_ttl_seconds
         self._http_client: httpx.AsyncClient | None = None
         self._cache_lock = RLock()
         self._search_cache: TTLCache[tuple[str, int, tuple[str, ...]], list[ResearchFinding]] = TTLCache(
             maxsize=cache_maxsize,
             ttl=cache_ttl_seconds,
         )
+        self._page_cache: TTLCache[str, str | None] = TTLCache(maxsize=cache_maxsize, ttl=cache_ttl_seconds)
 
     def available(self) -> bool:
         return bool(self.tavily_api_key or self.exa_api_key)
@@ -101,7 +118,8 @@ class ResearchClient:
             f'"{symbol}"{name_part} '
             '("earnings call" OR transcript OR "conference call" OR guidance OR outlook OR commentary)'
         )
-        return await self.search_market_context(query=query, limit=limit)
+        findings = await self.search_market_context(query=query, limit=limit)
+        return await self._enrich_earnings_call_findings(findings)
 
     async def _search_tavily(self, *, query: str, limit: int) -> list[ResearchFinding]:
         payload = {
@@ -113,14 +131,29 @@ class ResearchClient:
             "include_answer": False,
             "include_raw_content": False,
         }
+        started_at = asyncio.get_running_loop().time()
         try:
             client = self._get_http_client()
             response = await client.post("https://api.tavily.com/search", json=payload)
             response.raise_for_status()
             data = response.json()
         except (httpx.HTTPError, ValueError) as exc:
+            diagnostics.record_provider_latency(
+                service="research_client",
+                provider="tavily",
+                operation="search_market_context",
+                latency_ms=(asyncio.get_running_loop().time() - started_at) * 1000.0,
+                success=False,
+            )
             logger.warning("Tavily search failed: {}", exc)
             return []
+        diagnostics.record_provider_latency(
+            service="research_client",
+            provider="tavily",
+            operation="search_market_context",
+            latency_ms=(asyncio.get_running_loop().time() - started_at) * 1000.0,
+            success=True,
+        )
 
         findings: list[ResearchFinding] = []
         for item in data.get("results", [])[:limit]:
@@ -157,14 +190,29 @@ class ResearchClient:
             "x-api-key": self.exa_api_key,
             "Content-Type": "application/json",
         }
+        started_at = asyncio.get_running_loop().time()
         try:
             client = self._get_http_client()
             response = await client.post("https://api.exa.ai/search", headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()
         except (httpx.HTTPError, ValueError) as exc:
+            diagnostics.record_provider_latency(
+                service="research_client",
+                provider="exa",
+                operation="search_market_context",
+                latency_ms=(asyncio.get_running_loop().time() - started_at) * 1000.0,
+                success=False,
+            )
             logger.warning("Exa search failed: {}", exc)
             return []
+        diagnostics.record_provider_latency(
+            service="research_client",
+            provider="exa",
+            operation="search_market_context",
+            latency_ms=(asyncio.get_running_loop().time() - started_at) * 1000.0,
+            success=True,
+        )
 
         findings: list[ResearchFinding] = []
         for item in data.get("results", [])[:limit]:
@@ -187,6 +235,109 @@ class ResearchClient:
                 )
             )
         return findings
+
+    async def _enrich_earnings_call_findings(self, findings: Sequence[ResearchFinding]) -> list[ResearchFinding]:
+        if not findings:
+            return []
+        enriched: list[ResearchFinding] = []
+        for finding in findings:
+            transcript_text = await self._fetch_transcript_page_text(finding.url)
+            if not transcript_text:
+                enriched.append(finding)
+                continue
+            snippet = self._extract_transcript_like_snippet(transcript_text)
+            if not snippet:
+                enriched.append(finding)
+                continue
+            enriched.append(
+                ResearchFinding(
+                    title=finding.title,
+                    url=finding.url,
+                    source=finding.source,
+                    snippet=snippet,
+                    provider=finding.provider,
+                    published_at=finding.published_at,
+                    score=finding.score,
+                )
+            )
+        return enriched
+
+    async def _fetch_transcript_page_text(self, url: str) -> str | None:
+        normalized_url = str(url or "").strip()
+        if not normalized_url:
+            return None
+        with self._cache_lock:
+            if normalized_url in self._page_cache:
+                return self._page_cache[normalized_url]
+        try:
+            client = self._get_http_client()
+            response = await client.get(
+                normalized_url,
+                headers={
+                    "User-Agent": "invest-advisor-bot/0.2",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                },
+                follow_redirects=True,
+            )
+            response.raise_for_status()
+            content_type = str(response.headers.get("content-type") or "").casefold()
+            body = response.text
+        except httpx.HTTPError as exc:
+            logger.debug("Transcript page fetch failed for {}: {}", normalized_url, exc)
+            body = ""
+            content_type = ""
+        text: str | None = None
+        if "html" in content_type or body.lstrip().startswith("<"):
+            text = self._html_to_text(body)
+        elif body:
+            text = self._normalize_text(body)
+        if text and not self._looks_like_transcript_page(text, normalized_url):
+            text = None
+        with self._cache_lock:
+            self._page_cache[normalized_url] = text
+        return text
+
+    @classmethod
+    def _extract_transcript_like_snippet(cls, text: str) -> str:
+        normalized = cls._normalize_text(text)
+        if not normalized:
+            return ""
+        lowered = normalized.casefold()
+        start_index = 0
+        for hint in ("prepared remarks", "guidance", "outlook", "question-and-answer", "operator"):
+            candidate_index = lowered.find(hint)
+            if candidate_index >= 0:
+                start_index = candidate_index
+                break
+        excerpt = normalized[start_index : start_index + 900]
+        sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", excerpt) if part.strip()]
+        selected: list[str] = []
+        for sentence in sentences:
+            lowered_sentence = sentence.casefold()
+            if any(keyword in lowered_sentence for keyword in ("guidance", "outlook", "demand", "margin", "inventory", "pricing", "pipeline", "forecast")):
+                selected.append(sentence)
+            if len(selected) >= 4:
+                break
+        return " ".join(selected[:4])[:700] if selected else excerpt[:700]
+
+    @classmethod
+    def _looks_like_transcript_page(cls, text: str, url: str) -> bool:
+        lowered_text = text.casefold()
+        lowered_url = str(url or "").casefold()
+        return any(token in lowered_text or token in lowered_url for token in _TRANSCRIPT_PAGE_HINTS)
+
+    @classmethod
+    def _html_to_text(cls, html: str) -> str:
+        text = re.sub(r"(?is)<script.*?>.*?</script>", " ", html)
+        text = re.sub(r"(?is)<style.*?>.*?</style>", " ", text)
+        text = re.sub(r"(?i)<br\\s*/?>", "\n", text)
+        text = re.sub(r"(?i)</p>|</div>|</section>|</article>|</li>|</tr>|</h\\d>", "\n", text)
+        text = re.sub(r"(?s)<[^>]+>", " ", text)
+        return cls._normalize_text(unescape(text))
+
+    @staticmethod
+    def _normalize_text(value: str) -> str:
+        return re.sub(r"\s+", " ", str(value or "").strip())
 
     @staticmethod
     def _coalesce_exa_snippet(item: Mapping[str, Any]) -> str:
@@ -259,6 +410,24 @@ class ResearchClient:
         self._http_client = None
         if client is not None:
             await client.aclose()
+
+    def status(self) -> dict[str, object]:
+        with self._cache_lock:
+            cached_queries = len(self._search_cache)
+            cached_pages = len(self._page_cache)
+        configured_providers = {
+            "tavily": bool(self.tavily_api_key),
+            "exa": bool(self.exa_api_key),
+        }
+        return {
+            "available": self.available(),
+            "provider_order": list(self.provider_order),
+            "configured_providers": configured_providers,
+            "timeout_seconds": self.timeout,
+            "cache_ttl_seconds": self.cache_ttl_seconds,
+            "cached_queries": cached_queries,
+            "cached_pages": cached_pages,
+        }
 
     def _get_http_client(self) -> httpx.AsyncClient:
         client = self._http_client

@@ -40,12 +40,35 @@ class AlertStateStore:
                 self._persist()
         return accepted
 
+    def filter_alerts(self, alerts: Iterable[object]) -> list[object]:
+        now = datetime.now(timezone.utc)
+        normalized = [alert for alert in alerts if str(getattr(alert, "key", "") or "").strip()]
+        if not normalized:
+            return []
+        if self._db is not None:
+            return self._filter_alerts_db(normalized, now=now)
+
+        accepted: list[object] = []
+        with self._lock:
+            self._prune(now)
+            for alert in normalized:
+                key = str(getattr(alert, "key", "") or "").strip()
+                cadence = self._resolve_alert_cadence(alert)
+                last_seen = self._state.get(key)
+                if last_seen is not None and now - last_seen < cadence:
+                    continue
+                self._state[key] = now
+                accepted.append(alert)
+            if accepted:
+                self._persist()
+        return accepted
+
     def _filter_new_keys_db(self, keys: Iterable[str], *, now: datetime) -> list[str]:
         normalized = [key for key in dict.fromkeys(str(key).strip() for key in keys) if key]
         if not normalized:
             return []
         assert self._db is not None
-        cutoff = now - self.suppression
+        cutoff = now - self._retention_window()
         self._db.execute("DELETE FROM bot_alert_state WHERE last_seen < %s", (cutoff,))
         rows = self._db.fetch_all(
             "SELECT alert_key, last_seen FROM bot_alert_state WHERE alert_key = ANY(%s)",
@@ -76,6 +99,62 @@ class AlertStateStore:
             )
         return accepted
 
+    def _filter_alerts_db(self, alerts: Iterable[object], *, now: datetime) -> list[object]:
+        normalized: list[object] = []
+        key_map: dict[str, object] = {}
+        for alert in alerts:
+            key = str(getattr(alert, "key", "") or "").strip()
+            if not key or key in key_map:
+                continue
+            key_map[key] = alert
+            normalized.append(alert)
+        if not normalized:
+            return []
+        assert self._db is not None
+        cutoff = now - self._retention_window()
+        self._db.execute("DELETE FROM bot_alert_state WHERE last_seen < %s", (cutoff,))
+        rows = self._db.fetch_all(
+            "SELECT alert_key, last_seen FROM bot_alert_state WHERE alert_key = ANY(%s)",
+            ([str(getattr(alert, "key", "") or "").strip() for alert in normalized],),
+        )
+        seen_map = {
+            str(key): value
+            for key, value in rows
+            if isinstance(key, str) and isinstance(value, datetime)
+        }
+        accepted: list[object] = []
+        upserts: list[tuple[object, ...]] = []
+        for alert in normalized:
+            key = str(getattr(alert, "key", "") or "").strip()
+            cadence = self._resolve_alert_cadence(alert)
+            last_seen = seen_map.get(key)
+            if last_seen is not None and now - last_seen < cadence:
+                continue
+            accepted.append(alert)
+            upserts.append((key, now))
+        if upserts:
+            self._db.executemany(
+                """
+                INSERT INTO bot_alert_state (alert_key, last_seen)
+                VALUES (%s, %s)
+                ON CONFLICT (alert_key)
+                DO UPDATE SET last_seen = EXCLUDED.last_seen
+                """,
+                upserts,
+            )
+        return accepted
+
+    def _resolve_alert_cadence(self, alert: object) -> timedelta:
+        metadata = getattr(alert, "metadata", None)
+        if not isinstance(metadata, dict):
+            return self.suppression
+        raw_minutes = metadata.get("realert_after_minutes")
+        try:
+            minutes = int(float(raw_minutes))
+        except (TypeError, ValueError):
+            return self.suppression
+        return timedelta(minutes=max(1, minutes))
+
     def _load(self) -> None:
         if not self.path.exists():
             return
@@ -99,6 +178,10 @@ class AlertStateStore:
         self.path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _prune(self, now: datetime) -> None:
-        expired = [key for key, timestamp in self._state.items() if now - timestamp >= self.suppression]
+        retention = self._retention_window()
+        expired = [key for key, timestamp in self._state.items() if now - timestamp >= retention]
         for key in expired:
             self._state.pop(key, None)
+
+    def _retention_window(self) -> timedelta:
+        return max(self.suppression, timedelta(days=7))

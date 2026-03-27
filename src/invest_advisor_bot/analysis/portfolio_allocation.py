@@ -140,6 +140,8 @@ def build_portfolio_allocation_plan(
     investor_profile: InvestorProfile,
     macro_regime: MacroRegimeAssessment,
     asset_snapshots: Sequence[Mapping[str, object]],
+    macro_context: Mapping[str, object] | None = None,
+    learning_multiplier: float = 1.0,
 ) -> PortfolioAllocationPlan:
     allocations = dict(_BASE_ALLOCATIONS[investor_profile.name])
     regime = macro_regime.regime
@@ -158,6 +160,12 @@ def build_portfolio_allocation_plan(
         allocations["core_etf"] += 3
         allocations["cash"] -= 4
         allocations["defensive"] -= 4
+    effective_learning_multiplier = max(0.75, min(1.35, float(learning_multiplier)))
+    overlay_reasons = _apply_direct_macro_overlays(
+        allocations=allocations,
+        macro_context=macro_context,
+        learning_multiplier=effective_learning_multiplier,
+    )
     allocations = _normalize_allocations(allocations)
 
     buckets: list[AllocationMixBucket] = []
@@ -180,12 +188,23 @@ def build_portfolio_allocation_plan(
             )
         )
 
+    narrative = _REGIME_NARRATIVE.get(regime, _REGIME_NARRATIVE["mixed_transition"])
+    if overlay_reasons:
+        narrative = f"{narrative} Direct overlay: {'; '.join(overlay_reasons[:2])}."
+    rebalance_note = "Review allocation every day and rebalance any bucket drifting more than 5 percentage points."
+    if overlay_reasons:
+        rebalance_note += (
+            " Active macro overlays: "
+            + "; ".join(overlay_reasons[:3])
+            + f" | shift multiplier x{effective_learning_multiplier:.2f}."
+        )
+
     return PortfolioAllocationPlan(
         profile_name=investor_profile.name,
         macro_regime=regime,
-        narrative=_REGIME_NARRATIVE.get(regime, _REGIME_NARRATIVE["mixed_transition"]),
+        narrative=narrative,
         buckets=tuple(buckets),
-        rebalance_note="Review allocation every day and rebalance any bucket drifting more than 5 percentage points.",
+        rebalance_note=rebalance_note,
     )
 
 
@@ -311,6 +330,64 @@ def _normalize_allocations(allocations: Mapping[AllocationMixCategory, int]) -> 
             scaled[key] += 1 if delta > 0 else -1
             delta += -1 if delta > 0 else 1
     return scaled
+
+
+def _apply_direct_macro_overlays(
+    *,
+    allocations: dict[AllocationMixCategory, int],
+    macro_context: Mapping[str, object] | None,
+    learning_multiplier: float,
+) -> list[str]:
+    context = macro_context or {}
+    reasons: list[str] = []
+    core_pce_yoy = _as_float(context.get("core_pce_yoy"))
+    gdp_qoq_annualized = _as_float(context.get("gdp_qoq_annualized"))
+    personal_spending_mom = _as_float(context.get("personal_spending_mom"))
+    alfred_payroll_revision_k = _as_float(context.get("alfred_payroll_revision_k"))
+    cftc_equity_net_pct_oi = _as_float(context.get("cftc_equity_net_pct_oi"))
+    cftc_ust10y_net_pct_oi = _as_float(context.get("cftc_ust10y_net_pct_oi"))
+    finra_spy_short_volume_ratio = _as_float(context.get("finra_spy_short_volume_ratio"))
+    finra_qqq_short_volume_ratio = _as_float(context.get("finra_qqq_short_volume_ratio"))
+
+    if (core_pce_yoy is not None and core_pce_yoy >= 2.9) or (cftc_ust10y_net_pct_oi is not None and cftc_ust10y_net_pct_oi <= -10):
+        allocations["gold"] += _scaled_shift(2, learning_multiplier)
+        allocations["cash"] += _scaled_shift(2, learning_multiplier)
+        allocations["growth"] -= _scaled_shift(3, learning_multiplier)
+        allocations["core_etf"] -= _scaled_shift(1, learning_multiplier)
+        reasons.append("sticky inflation / rates positioning keeps the portfolio more defensive")
+
+    if (
+        (gdp_qoq_annualized is not None and gdp_qoq_annualized < 1.5)
+        or (personal_spending_mom is not None and personal_spending_mom < 0)
+        or (alfred_payroll_revision_k is not None and alfred_payroll_revision_k <= -40)
+    ):
+        allocations["cash"] += _scaled_shift(2, learning_multiplier)
+        allocations["defensive"] += _scaled_shift(2, learning_multiplier)
+        allocations["growth"] -= _scaled_shift(3, learning_multiplier)
+        allocations["core_etf"] -= _scaled_shift(1, learning_multiplier)
+        reasons.append("growth and labor revisions argue for lower cyclical risk")
+
+    crowded_equity_tape = (
+        cftc_equity_net_pct_oi is not None
+        and cftc_equity_net_pct_oi >= 15
+        and (
+            (finra_spy_short_volume_ratio is not None and finra_spy_short_volume_ratio >= 0.55)
+            or (finra_qqq_short_volume_ratio is not None and finra_qqq_short_volume_ratio >= 0.55)
+        )
+    )
+    if crowded_equity_tape:
+        allocations["cash"] += _scaled_shift(2, learning_multiplier)
+        allocations["defensive"] += _scaled_shift(1, learning_multiplier)
+        allocations["growth"] -= _scaled_shift(2, learning_multiplier)
+        allocations["core_etf"] -= _scaled_shift(1, learning_multiplier)
+        reasons.append("crowded equity positioning plus heavy short flow lowers risk appetite")
+
+    return reasons
+
+
+def _scaled_shift(base_shift: int, learning_multiplier: float) -> int:
+    magnitude = max(1, int(round(abs(base_shift) * max(0.75, min(1.35, float(learning_multiplier))))))
+    return magnitude if base_shift >= 0 else -magnitude
 
 
 def _as_float(value: object) -> float | None:

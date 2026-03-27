@@ -4,6 +4,7 @@ import asyncio
 import time
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
+from email.utils import parsedate_to_datetime
 from typing import Any, Literal, Mapping, Sequence
 
 import httpx
@@ -30,10 +31,33 @@ DEFAULT_GITHUB_MODELS: tuple[str, ...] = (
     "openai/gpt-4.1-mini",
     "meta/Llama-3.3-70B-Instruct",
 )
+DEFAULT_CEREBRAS_MODELS: tuple[str, ...] = (
+    "gpt-oss-120b",
+    "zai-glm-4.7",
+)
+DEFAULT_CLOUDFLARE_MODELS: tuple[str, ...] = (
+    "@cf/meta/llama-3.1-8b-instruct-fast",
+    "@cf/meta/llama-3.1-8b-instruct",
+)
+DEFAULT_HUGGINGFACE_MODELS: tuple[str, ...] = (
+    "google/gemma-2-2b-it",
+    "Qwen/Qwen2.5-7B-Instruct-1M",
+)
 DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD = 3
 DEFAULT_CIRCUIT_BREAKER_COOLDOWN_SECONDS = 180
 
 ProviderKind = Literal["openai_compatible", "gemini_native"]
+ProviderHealthState = Literal[
+    "idle",
+    "ok",
+    "cooldown",
+    "rate_limited",
+    "auth_failed",
+    "restricted",
+    "model_error",
+    "upstream_error",
+    "network_error",
+]
 
 
 @dataclass(slots=True, frozen=True)
@@ -72,6 +96,19 @@ class LLMProviderConfig:
         return tuple(deduped)
 
 
+@dataclass(slots=True)
+class ProviderRuntimeState:
+    provider: str
+    state: ProviderHealthState = "idle"
+    last_model: str | None = None
+    last_status_code: int | None = None
+    last_error: str | None = None
+    last_success_at: datetime | None = None
+    last_failure_at: datetime | None = None
+    cooldown_until: datetime | None = None
+    retry_after_seconds: float | None = None
+
+
 class OpenAICompatibleLLMClient:
     """Multi-provider async client for OpenAI-compatible APIs and Gemini native REST."""
 
@@ -79,6 +116,11 @@ class OpenAICompatibleLLMClient:
         self.providers = tuple(provider for provider in providers if provider.api_key.strip())
         self._provider_failures: dict[str, int] = {}
         self._provider_open_until: dict[str, float] = {}
+        self._provider_failure_context: dict[str, dict[str, Any]] = {}
+        self._provider_runtime_state: dict[str, ProviderRuntimeState] = {
+            provider.provider_name: ProviderRuntimeState(provider=provider.provider_name)
+            for provider in self.providers
+        }
         self._http_clients: dict[float, httpx.AsyncClient] = {}
 
     async def generate_text(
@@ -112,6 +154,7 @@ class OpenAICompatibleLLMClient:
                 if response is not None:
                     provider_succeeded = True
                     self._reset_provider_failure(provider.provider_name)
+                    self._mark_provider_success(provider.provider_name, model=response.model)
                     log_event(
                         "llm_provider_success",
                         provider=provider.provider_name,
@@ -269,15 +312,31 @@ class OpenAICompatibleLLMClient:
     ) -> dict[str, Any] | None:
         response: httpx.Response | None = None
         for attempt in range(provider.max_retries + 1):
+            started_at = time.perf_counter()
             try:
                 client = self._get_http_client(provider.timeout)
                 response = await client.post(endpoint, headers=dict(headers), json=dict(payload), params=params)
                 response.raise_for_status()
+                diagnostics.record_provider_latency(
+                    service="llm_client",
+                    provider=provider.provider_name,
+                    operation="generate_text",
+                    latency_ms=(time.perf_counter() - started_at) * 1000.0,
+                    success=True,
+                )
                 break
             except httpx.HTTPStatusError as exc:
                 status_code = exc.response.status_code
+                retry_after_seconds = self._parse_retry_after_seconds(getattr(exc.response, "headers", None))
+                diagnostics.record_provider_latency(
+                    service="llm_client",
+                    provider=provider.provider_name,
+                    operation="generate_text",
+                    latency_ms=(time.perf_counter() - started_at) * 1000.0,
+                    success=False,
+                )
                 if attempt < provider.max_retries and status_code in {408, 409, 429, 500, 502, 503, 504}:
-                    await asyncio.sleep(0.75 * (attempt + 1))
+                    await asyncio.sleep(self._compute_retry_delay_seconds(attempt=attempt, retry_after_seconds=retry_after_seconds))
                     continue
                 logger.warning(
                     "{} model {} returned HTTP {}: {}",
@@ -299,10 +358,24 @@ class OpenAICompatibleLLMClient:
                     service=None,
                     detail={"status_code": status_code},
                 )
+                self._remember_provider_failure(
+                    provider_name=provider.provider_name,
+                    model=model,
+                    status_code=status_code,
+                    error=exc.response.text,
+                    retry_after_seconds=retry_after_seconds,
+                )
                 return None
             except httpx.HTTPError as exc:
+                diagnostics.record_provider_latency(
+                    service="llm_client",
+                    provider=provider.provider_name,
+                    operation="generate_text",
+                    latency_ms=(time.perf_counter() - started_at) * 1000.0,
+                    success=False,
+                )
                 if attempt < provider.max_retries:
-                    await asyncio.sleep(0.75 * (attempt + 1))
+                    await asyncio.sleep(self._compute_retry_delay_seconds(attempt=attempt, retry_after_seconds=None))
                     continue
                 logger.warning("{} model {} request failed: {}", provider.provider_name, model, exc)
                 log_event(
@@ -317,6 +390,13 @@ class OpenAICompatibleLLMClient:
                     model=model,
                     service=None,
                     detail={"error": str(exc)},
+                )
+                self._remember_provider_failure(
+                    provider_name=provider.provider_name,
+                    model=model,
+                    status_code=None,
+                    error=str(exc),
+                    retry_after_seconds=None,
                 )
                 return None
 
@@ -338,6 +418,13 @@ class OpenAICompatibleLLMClient:
                 service=None,
                 detail={"error": "invalid_json"},
             )
+            self._remember_provider_failure(
+                provider_name=provider.provider_name,
+                model=model,
+                status_code=None,
+                error="invalid_json",
+                retry_after_seconds=None,
+            )
             return None
         return dict(parsed) if isinstance(parsed, Mapping) else None
 
@@ -346,6 +433,59 @@ class OpenAICompatibleLLMClient:
         self._http_clients.clear()
         for client in clients:
             await client.aclose()
+
+    def status(self) -> dict[str, Any]:
+        now = datetime.now(timezone.utc)
+        open_circuits = [
+            provider.provider_name
+            for provider in self.providers
+            if self._provider_open_until.get(provider.provider_name, 0.0) > time.monotonic()
+        ]
+        provider_statuses = []
+        for provider in self.providers:
+            runtime_state = self._provider_runtime_state.get(provider.provider_name) or ProviderRuntimeState(
+                provider=provider.provider_name
+            )
+            open_until = self._provider_open_until.get(provider.provider_name, 0.0)
+            cooldown_until = runtime_state.cooldown_until
+            if cooldown_until is not None and cooldown_until <= now:
+                cooldown_until = None
+            if open_until > time.monotonic():
+                remaining_seconds = max(0.0, open_until - time.monotonic())
+                cooldown_until = now + timedelta(seconds=remaining_seconds)
+            provider_statuses.append(
+                {
+                    "provider": provider.provider_name,
+                    "state": runtime_state.state,
+                    "last_model": runtime_state.last_model,
+                    "last_status_code": runtime_state.last_status_code,
+                    "last_error": runtime_state.last_error,
+                    "last_success_at": runtime_state.last_success_at.isoformat() if runtime_state.last_success_at else None,
+                    "last_failure_at": runtime_state.last_failure_at.isoformat() if runtime_state.last_failure_at else None,
+                    "cooldown_until": cooldown_until.isoformat() if cooldown_until is not None else None,
+                    "retry_after_seconds": runtime_state.retry_after_seconds,
+                    "is_open": provider.provider_name in open_circuits,
+                    "failure_count": self._provider_failures.get(provider.provider_name, 0),
+                }
+            )
+        return {
+            "available": bool(self.providers),
+            "provider_order": [provider.provider_name for provider in self.providers],
+            "configured_providers": [
+                {
+                    "provider": provider.provider_name,
+                    "kind": provider.provider_kind,
+                    "primary_model": provider.primary_model,
+                    "fallback_models": list(provider.fallback_models),
+                    "timeout_seconds": provider.timeout,
+                    "max_output_tokens": provider.max_output_tokens,
+                }
+                for provider in self.providers
+            ],
+            "open_circuits": open_circuits,
+            "provider_statuses": provider_statuses,
+            "http_client_pool_size": len(self._http_clients),
+        }
 
     @staticmethod
     def _extract_openai_compatible_text(response_json: Mapping[str, Any]) -> str:
@@ -412,6 +552,9 @@ class OpenAICompatibleLLMClient:
         if open_until <= time.monotonic():
             if provider_name in self._provider_open_until:
                 self._provider_open_until.pop(provider_name, None)
+                runtime_state = self._provider_runtime_state.get(provider_name)
+                if runtime_state is not None:
+                    runtime_state.cooldown_until = None
                 diagnostics.record_provider_circuit(
                     provider=provider_name,
                     is_open=False,
@@ -429,20 +572,29 @@ class OpenAICompatibleLLMClient:
         return True
 
     def _record_provider_failure(self, provider_name: str) -> None:
+        failure_context = self._provider_failure_context.get(provider_name) or {}
+        status_code = self._as_optional_int(failure_context.get("status_code"))
+        retry_after_seconds = self._as_optional_float(failure_context.get("retry_after_seconds"))
         failure_count = self._provider_failures.get(provider_name, 0) + 1
         self._provider_failures[provider_name] = failure_count
         open_until_dt = None
-        if failure_count >= DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD:
-            monotonic_until = time.monotonic() + DEFAULT_CIRCUIT_BREAKER_COOLDOWN_SECONDS
+        cooldown_seconds = self._determine_cooldown_seconds(
+            failure_count=failure_count,
+            status_code=status_code,
+            retry_after_seconds=retry_after_seconds,
+        )
+        if cooldown_seconds is not None:
+            monotonic_until = time.monotonic() + cooldown_seconds
             self._provider_open_until[provider_name] = monotonic_until
-            open_until_dt = datetime.now(timezone.utc) + timedelta(seconds=DEFAULT_CIRCUIT_BREAKER_COOLDOWN_SECONDS)
+            open_until_dt = datetime.now(timezone.utc) + timedelta(seconds=cooldown_seconds)
             log_event(
                 "llm_provider_circuit_trip",
                 level="warning",
                 provider=provider_name,
                 failure_count=failure_count,
-                cooldown_seconds=DEFAULT_CIRCUIT_BREAKER_COOLDOWN_SECONDS,
+                cooldown_seconds=round(cooldown_seconds, 1),
             )
+        self._mark_provider_failure(provider_name=provider_name, open_until=open_until_dt)
         diagnostics.record_provider_circuit(
             provider=provider_name,
             is_open=provider_name in self._provider_open_until,
@@ -453,6 +605,11 @@ class OpenAICompatibleLLMClient:
     def _reset_provider_failure(self, provider_name: str) -> None:
         self._provider_failures[provider_name] = 0
         self._provider_open_until.pop(provider_name, None)
+        self._provider_failure_context.pop(provider_name, None)
+        runtime_state = self._provider_runtime_state.get(provider_name)
+        if runtime_state is not None:
+            runtime_state.cooldown_until = None
+            runtime_state.retry_after_seconds = None
         diagnostics.record_provider_circuit(
             provider=provider_name,
             is_open=False,
@@ -467,6 +624,128 @@ class OpenAICompatibleLLMClient:
             client = httpx.AsyncClient(timeout=timeout)
             self._http_clients[key] = client
         return client
+
+    def _mark_provider_success(self, provider_name: str, *, model: str) -> None:
+        state = self._provider_runtime_state.setdefault(provider_name, ProviderRuntimeState(provider=provider_name))
+        state.state = "ok"
+        state.last_model = model
+        state.last_status_code = None
+        state.last_error = None
+        state.last_success_at = datetime.now(timezone.utc)
+        state.retry_after_seconds = None
+        state.cooldown_until = None
+
+    def _mark_provider_failure(self, *, provider_name: str, open_until: datetime | None) -> None:
+        failure_context = self._provider_failure_context.get(provider_name) or {}
+        state = self._provider_runtime_state.setdefault(provider_name, ProviderRuntimeState(provider=provider_name))
+        state.state = self._classify_provider_state(
+            status_code=self._as_optional_int(failure_context.get("status_code")),
+            error=self._as_optional_str(failure_context.get("error")),
+        )
+        state.last_model = self._as_optional_str(failure_context.get("model"))
+        state.last_status_code = self._as_optional_int(failure_context.get("status_code"))
+        state.last_error = self._as_optional_str(failure_context.get("error"))
+        state.last_failure_at = datetime.now(timezone.utc)
+        state.retry_after_seconds = self._as_optional_float(failure_context.get("retry_after_seconds"))
+        state.cooldown_until = open_until
+
+    def _remember_provider_failure(
+        self,
+        *,
+        provider_name: str,
+        model: str,
+        status_code: int | None,
+        error: str | None,
+        retry_after_seconds: float | None,
+    ) -> None:
+        self._provider_failure_context[provider_name] = {
+            "model": model,
+            "status_code": status_code,
+            "error": (error or "").strip()[:240] or None,
+            "retry_after_seconds": retry_after_seconds,
+        }
+
+    @staticmethod
+    def _compute_retry_delay_seconds(*, attempt: int, retry_after_seconds: float | None) -> float:
+        base_delay = 0.75 * (attempt + 1)
+        if retry_after_seconds is None:
+            return base_delay
+        return max(base_delay, min(retry_after_seconds, 30.0))
+
+    @staticmethod
+    def _determine_cooldown_seconds(
+        *,
+        failure_count: int,
+        status_code: int | None,
+        retry_after_seconds: float | None,
+    ) -> float | None:
+        if status_code == 429:
+            return max(90.0, min(retry_after_seconds or 300.0, 1800.0))
+        if status_code in {401, 402, 403}:
+            return 900.0
+        if failure_count >= DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD:
+            return float(DEFAULT_CIRCUIT_BREAKER_COOLDOWN_SECONDS)
+        return None
+
+    @staticmethod
+    def _classify_provider_state(
+        *,
+        status_code: int | None,
+        error: str | None,
+    ) -> ProviderHealthState:
+        if status_code == 429:
+            return "rate_limited"
+        if status_code == 401:
+            return "auth_failed"
+        if status_code in {402, 403}:
+            return "restricted"
+        if status_code == 404:
+            return "model_error"
+        if status_code is not None and status_code >= 500:
+            return "upstream_error"
+        if error:
+            return "network_error"
+        return "cooldown"
+
+    @staticmethod
+    def _parse_retry_after_seconds(headers: Mapping[str, Any] | None) -> float | None:
+        if not isinstance(headers, Mapping):
+            return None
+        value = headers.get("Retry-After")
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            return max(0.0, float(text))
+        except ValueError:
+            pass
+        try:
+            parsed = parsedate_to_datetime(text)
+        except (TypeError, ValueError, IndexError):
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return max(0.0, (parsed - datetime.now(timezone.utc)).total_seconds())
+
+    @staticmethod
+    def _as_optional_int(value: object) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _as_optional_float(value: object) -> float | None:
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
 
 class OpenAILLMClient(OpenAICompatibleLLMClient):
@@ -526,8 +805,23 @@ def build_default_llm_client(
     github_models: Sequence[str] = DEFAULT_GITHUB_MODELS,
     github_models_base_url: str = "https://models.github.ai/inference",
     github_models_api_version: str = "2026-03-10",
+    cerebras_api_key: str = "",
+    cerebras_models: Sequence[str] = DEFAULT_CEREBRAS_MODELS,
+    cerebras_base_url: str = "https://api.cerebras.ai/v1",
+    cloudflare_account_id: str = "",
+    cloudflare_api_token: str = "",
+    cloudflare_models: Sequence[str] = DEFAULT_CLOUDFLARE_MODELS,
+    cloudflare_base_url: str = "",
+    huggingface_api_key: str = "",
+    huggingface_models: Sequence[str] = DEFAULT_HUGGINGFACE_MODELS,
+    huggingface_base_url: str = "https://router.huggingface.co/v1",
 ) -> OpenAICompatibleLLMClient:
     provider_order = _normalize_provider_order(llm_provider=llm_provider, llm_provider_order=llm_provider_order)
+    normalized_cloudflare_base_url = cloudflare_base_url.strip().rstrip("/")
+    if not normalized_cloudflare_base_url and cloudflare_account_id.strip():
+        normalized_cloudflare_base_url = (
+            f"https://api.cloudflare.com/client/v4/accounts/{cloudflare_account_id.strip()}/ai/v1"
+        )
     provider_map: dict[str, LLMProviderConfig] = {
         "gemini": LLMProviderConfig(
             provider_name="gemini",
@@ -580,6 +874,39 @@ def build_default_llm_client(
                 ("X-GitHub-Api-Version", github_models_api_version),
             ),
         ),
+        "cerebras": LLMProviderConfig(
+            provider_name="cerebras",
+            provider_kind="openai_compatible",
+            api_key=cerebras_api_key.strip(),
+            base_url=cerebras_base_url.rstrip("/"),
+            primary_model=(tuple(cerebras_models) or DEFAULT_CEREBRAS_MODELS)[0],
+            fallback_models=tuple(cerebras_models[1:]) if cerebras_models else DEFAULT_CEREBRAS_MODELS[1:],
+            timeout=llm_timeout_seconds,
+            max_output_tokens=llm_max_output_tokens,
+            max_retries=1,
+        ),
+        "cloudflare": LLMProviderConfig(
+            provider_name="cloudflare",
+            provider_kind="openai_compatible",
+            api_key=cloudflare_api_token.strip(),
+            base_url=normalized_cloudflare_base_url,
+            primary_model=(tuple(cloudflare_models) or DEFAULT_CLOUDFLARE_MODELS)[0],
+            fallback_models=tuple(cloudflare_models[1:]) if cloudflare_models else DEFAULT_CLOUDFLARE_MODELS[1:],
+            timeout=llm_timeout_seconds,
+            max_output_tokens=llm_max_output_tokens,
+            max_retries=1,
+        ),
+        "huggingface": LLMProviderConfig(
+            provider_name="huggingface",
+            provider_kind="openai_compatible",
+            api_key=huggingface_api_key.strip(),
+            base_url=huggingface_base_url.rstrip("/"),
+            primary_model=(tuple(huggingface_models) or DEFAULT_HUGGINGFACE_MODELS)[0],
+            fallback_models=tuple(huggingface_models[1:]) if huggingface_models else DEFAULT_HUGGINGFACE_MODELS[1:],
+            timeout=llm_timeout_seconds,
+            max_output_tokens=llm_max_output_tokens,
+            max_retries=1,
+        ),
         "openai": LLMProviderConfig(
             provider_name="openai",
             provider_kind="openai_compatible",
@@ -617,9 +944,15 @@ def _normalize_provider_order(
     if normalized_provider == "groq":
         return ("groq", "gemini", "openrouter", "github_models", "openai")
     if normalized_provider == "github_models":
-        return ("github_models", "gemini", "openrouter", "groq", "openai")
+        return ("github_models", "gemini", "groq", "cerebras", "cloudflare", "openrouter", "huggingface", "openai")
     if normalized_provider == "openrouter":
-        return ("openrouter", "gemini", "groq", "github_models", "openai")
+        return ("openrouter", "gemini", "groq", "cerebras", "cloudflare", "huggingface", "github_models", "openai")
+    if normalized_provider == "cerebras":
+        return ("cerebras", "gemini", "groq", "cloudflare", "openrouter", "huggingface", "github_models", "openai")
+    if normalized_provider == "cloudflare":
+        return ("cloudflare", "gemini", "groq", "cerebras", "openrouter", "huggingface", "github_models", "openai")
+    if normalized_provider == "huggingface":
+        return ("huggingface", "gemini", "groq", "cerebras", "cloudflare", "openrouter", "github_models", "openai")
     if normalized_provider == "openai":
-        return ("openai", "gemini", "openrouter", "groq", "github_models")
-    return ("gemini", "openrouter", "groq", "github_models", "openai")
+        return ("openai", "gemini", "groq", "cerebras", "cloudflare", "openrouter", "huggingface", "github_models")
+    return ("gemini", "groq", "cerebras", "cloudflare", "openrouter", "huggingface", "github_models", "openai")

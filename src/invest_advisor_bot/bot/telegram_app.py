@@ -18,9 +18,14 @@ from invest_advisor_bot.bot.handlers import (
     set_bot_commands,
 )
 from invest_advisor_bot.bot.jobs import register_jobs
+from invest_advisor_bot.orchestration.prefect_flows import WorkflowOrchestrator
+from invest_advisor_bot.providers.broker_client import ExecutionSandboxClient
+from invest_advisor_bot.providers.live_market_stream import LiveMarketStreamClient
 from invest_advisor_bot.providers.market_data_client import MarketDataClient
+from invest_advisor_bot.providers.microstructure_client import MicrostructureClient
 from invest_advisor_bot.providers.news_client import NewsClient
 from invest_advisor_bot.providers.research_client import ResearchClient
+from invest_advisor_bot.providers.transcript_client import EarningsTranscriptClient
 from invest_advisor_bot.services.recommendation_service import RecommendationService
 
 
@@ -31,12 +36,21 @@ def create_application(
     market_data_client: MarketDataClient,
     news_client: NewsClient,
     research_client: ResearchClient | None = None,
+    broker_client: ExecutionSandboxClient | None = None,
+    transcript_client: EarningsTranscriptClient | None = None,
+    microstructure_client: MicrostructureClient | None = None,
+    live_market_stream_client: LiveMarketStreamClient | None = None,
+    workflow_orchestrator: WorkflowOrchestrator | None = None,
     market_news_limit: int = 5,
     market_history_period: str = "6mo",
     market_history_interval: str = "1d",
     market_history_limit: int = 180,
     telegram_report_chat_id: str = "",
     min_request_interval_seconds: float = 2.0,
+    macro_event_refresh_interval_minutes: int = 5,
+    macro_event_pre_window_minutes: int = 20,
+    macro_event_post_window_minutes: int = 90,
+    macro_event_lookahead_hours: int = 12,
     risk_vix_alert_threshold: float = 30.0,
     risk_score_alert_threshold: float = 6.5,
     opportunity_score_alert_threshold: float = 2.8,
@@ -56,6 +70,18 @@ def create_application(
     logs_dir: Path | None = None,
     log_retention: str = "14 days",
     burn_in_target_days: int = 14,
+    health_alert_webhook_url: str = "",
+    health_alert_webhook_secret: str = "",
+    health_alert_interval_minutes: int = 5,
+    health_alert_cooldown_minutes: int = 30,
+    health_alert_timeout_seconds: float = 8.0,
+    health_alert_retry_count: int = 3,
+    health_alert_retry_backoff_seconds: float = 1.5,
+    live_stream_symbols: tuple[str, ...] = (),
+    live_stream_poll_interval_seconds: int = 60,
+    event_bus_consumer_poll_interval_seconds: int = 60,
+    live_stream_max_events: int = 25,
+    live_stream_spread_alert_bps: float = 25.0,
     jobs_enabled: bool = False,
     daily_digest_hour_utc: int = 1,
     daily_digest_minute_utc: int = 0,
@@ -82,12 +108,21 @@ def create_application(
         market_data_client=market_data_client,
         news_client=news_client,
         research_client=research_client,
+        broker_client=broker_client,
+        transcript_client=transcript_client,
+        microstructure_client=microstructure_client,
+        live_market_stream_client=live_market_stream_client,
+        workflow_orchestrator=workflow_orchestrator,
         market_news_limit=market_news_limit,
         market_history_period=market_history_period,
         market_history_interval=market_history_interval,
         market_history_limit=market_history_limit,
         telegram_report_chat_id=telegram_report_chat_id,
         min_request_interval_seconds=min_request_interval_seconds,
+        macro_event_refresh_interval_minutes=macro_event_refresh_interval_minutes,
+        macro_event_pre_window_minutes=macro_event_pre_window_minutes,
+        macro_event_post_window_minutes=macro_event_post_window_minutes,
+        macro_event_lookahead_hours=macro_event_lookahead_hours,
         risk_vix_alert_threshold=risk_vix_alert_threshold,
         risk_score_alert_threshold=risk_score_alert_threshold,
         opportunity_score_alert_threshold=opportunity_score_alert_threshold,
@@ -107,6 +142,17 @@ def create_application(
         logs_dir=logs_dir,
         log_retention=log_retention,
         burn_in_target_days=burn_in_target_days,
+        health_alert_webhook_url=health_alert_webhook_url,
+        health_alert_webhook_secret=health_alert_webhook_secret,
+        health_alert_interval_minutes=health_alert_interval_minutes,
+        health_alert_cooldown_minutes=health_alert_cooldown_minutes,
+        health_alert_timeout_seconds=health_alert_timeout_seconds,
+        health_alert_retry_count=health_alert_retry_count,
+        health_alert_retry_backoff_seconds=health_alert_retry_backoff_seconds,
+        live_stream_symbols=live_stream_symbols,
+        live_stream_poll_interval_seconds=live_stream_poll_interval_seconds,
+        live_stream_max_events=live_stream_max_events,
+        live_stream_spread_alert_bps=live_stream_spread_alert_bps,
     )
 
     if jobs_enabled:
@@ -121,10 +167,36 @@ def create_application(
             closing_report_hour_utc=closing_report_hour_utc,
             closing_report_minute_utc=closing_report_minute_utc,
             risk_check_interval_minutes=risk_check_interval_minutes,
+            macro_event_refresh_interval_minutes=macro_event_refresh_interval_minutes,
             earnings_alert_days_ahead=earnings_alert_days_ahead,
             maintenance_cleanup_interval_minutes=maintenance_cleanup_interval_minutes,
             stock_pick_evaluation_interval_minutes=stock_pick_evaluation_interval_minutes,
             backup_interval_hours=backup_interval_hours,
+            health_alert_interval_minutes=health_alert_interval_minutes,
+            live_stream_poll_interval_seconds=live_stream_poll_interval_seconds,
+            event_bus_consumer_poll_interval_seconds=event_bus_consumer_poll_interval_seconds,
+        )
+    elif health_alert_webhook_url.strip():
+        register_jobs(
+            application,
+            daily_digest_hour_utc=daily_digest_hour_utc,
+            daily_digest_minute_utc=daily_digest_minute_utc,
+            morning_report_hour_utc=morning_report_hour_utc,
+            morning_report_minute_utc=morning_report_minute_utc,
+            midday_report_hour_utc=midday_report_hour_utc,
+            midday_report_minute_utc=midday_report_minute_utc,
+            closing_report_hour_utc=closing_report_hour_utc,
+            closing_report_minute_utc=closing_report_minute_utc,
+            risk_check_interval_minutes=risk_check_interval_minutes,
+            macro_event_refresh_interval_minutes=macro_event_refresh_interval_minutes,
+            earnings_alert_days_ahead=earnings_alert_days_ahead,
+            maintenance_cleanup_interval_minutes=maintenance_cleanup_interval_minutes,
+            stock_pick_evaluation_interval_minutes=stock_pick_evaluation_interval_minutes,
+            backup_interval_hours=backup_interval_hours,
+            health_alert_interval_minutes=health_alert_interval_minutes,
+            live_stream_poll_interval_seconds=live_stream_poll_interval_seconds,
+            event_bus_consumer_poll_interval_seconds=event_bus_consumer_poll_interval_seconds,
+            health_alert_only=True,
         )
 
     register_handlers(application)

@@ -2,6 +2,8 @@ services:
   - type: web
     name: invest-advisor-bot
     runtime: python
+    # For the full production stack you can install:
+    # buildCommand: pip install -r requirements.txt -e .[observability,analytics,memory,quality,feature-store,evaluation,microstructure,streaming,backtesting,execution,semantic-layer]
     buildCommand: pip install -r requirements.txt -e .
     startCommand: python -m invest_advisor_bot.main
     healthCheckPath: /health
@@ -26,6 +28,94 @@ services:
       - key: TAVILY_API_KEY
         sync: false
       - key: EXA_API_KEY
+        sync: false
+      - key: FMP_API_KEY
+        sync: false
+      - key: ECB_SERIES_MAP
+        sync: false
+      - key: IMF_API_BASE_URL
+        sync: false
+      - key: IMF_SERIES_MAP
+        sync: false
+      - key: WORLD_BANK_INDICATOR_MAP
+        sync: false
+      - key: GLOBAL_MACRO_CALENDAR_COUNTRIES
+        sync: false
+      - key: GLOBAL_MACRO_CALENDAR_IMPORTANCE
+        value: "2"
+      - key: GDELT_QUERY
+        sync: false
+      - key: DATABENTO_API_KEY
+        sync: false
+      - key: DATABENTO_EQUITIES_DATASET
+        sync: false
+      - key: DATABENTO_OPTIONS_DATASET
+        sync: false
+      - key: CBOE_TRADE_ALERT_ENABLED
+        value: "false"
+      - key: CBOE_TRADE_ALERT_API_KEY
+        sync: false
+      - key: CBOE_TRADE_ALERT_BASE_URL
+        sync: false
+      - key: LIVE_STREAM_ENABLED
+        value: "false"
+      - key: LIVE_STREAM_DATASET
+        sync: false
+      - key: BROKER_SANDBOX_ENABLED
+        value: "false"
+      - key: ALPACA_API_KEY
+        sync: false
+      - key: ALPACA_API_SECRET
+        sync: false
+      - key: TRADIER_ACCESS_TOKEN
+        sync: false
+      - key: TRADIER_ACCOUNT_ID
+        sync: false
+      - key: BRAINTRUST_ENABLED
+        value: "false"
+      - key: BRAINTRUST_API_KEY
+        sync: false
+      - key: LANGFUSE_ENABLED
+        value: "false"
+      - key: LANGFUSE_PUBLIC_KEY
+        sync: false
+      - key: LANGFUSE_SECRET_KEY
+        sync: false
+      - key: HUMAN_REVIEW_ENABLED
+        value: "false"
+      - key: DBT_SEMANTIC_LAYER_ENABLED
+        value: "false"
+      - key: QDRANT_ENABLED
+        value: "false"
+      - key: QDRANT_URL
+        sync: false
+      - key: FEATURE_STORE_ENABLED
+        value: "false"
+      - key: FEAST_ENABLED
+        value: "false"
+      - key: BACKTESTING_ENABLED
+        value: "false"
+      - key: EVENT_BUS_ENABLED
+        value: "false"
+      - key: EVENT_BUS_BROKERS
+        sync: false
+      - key: EVENT_BUS_CONSUMER_ENABLED
+        value: "false"
+      - key: EVENT_BUS_CONSUMER_GROUP
+        value: "invest-advisor-bot"
+      - key: HOT_PATH_CACHE_ENABLED
+        value: "false"
+      - key: REDIS_URL
+        sync: false
+      - key: ANALYTICS_WAREHOUSE_ENABLED
+        value: "false"
+      - key: CLICKHOUSE_URL
+        sync: false
+      - key: SEMANTIC_ANALYST_ENABLED
+        value: "false"
+      - key: PREFECT_ENABLED
+        value: "false"
+      - key: SEC_13F_MANAGER_CIKS
         sync: false
       - key: HEALTH_CHECK_ENABLED
         value: "true"

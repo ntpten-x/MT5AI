@@ -26,6 +26,10 @@ def calculate_risk_score(
     vix = _as_float(macro_context.get("vix"))
     tnx = _as_float(macro_context.get("tnx"))
     cpi_yoy = _as_float(macro_context.get("cpi_yoy"))
+    yield_spread = _as_float(macro_context.get("yield_spread_10y_2y"))
+    high_yield_spread = _as_float(macro_context.get("high_yield_spread"))
+    unemployment_rate = _as_float(macro_context.get("unemployment_rate"))
+    payrolls_mom_k = _as_float(macro_context.get("payrolls_mom_k"))
 
     if vix is not None:
         if vix >= 30:
@@ -44,6 +48,18 @@ def calculate_risk_score(
     if cpi_yoy is not None and cpi_yoy >= 3.2:
         score += 1.0
         reasons.append(f"CPI ยังสูงที่ {cpi_yoy:.2f}%")
+    if yield_spread is not None and yield_spread < 0:
+        score += 0.8
+        reasons.append(f"2s10s inverted ที่ {yield_spread:.2f}")
+    if high_yield_spread is not None and high_yield_spread >= 4.5:
+        score += 1.0
+        reasons.append(f"HY spread กว้างที่ {high_yield_spread:.2f}")
+    if unemployment_rate is not None and unemployment_rate >= 4.2:
+        score += 0.7
+        reasons.append(f"Unemployment สูงขึ้นที่ {unemployment_rate:.2f}%")
+    if payrolls_mom_k is not None and payrolls_mom_k < 125:
+        score += 0.5
+        reasons.append(f"Payroll ชะลอที่ {payrolls_mom_k:.0f}k")
 
     downtrend_count = sum(1 for trend in trends.values() if trend.direction == "downtrend")
     uptrend_count = sum(1 for trend in trends.values() if trend.direction == "uptrend")

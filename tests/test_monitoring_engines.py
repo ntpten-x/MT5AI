@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 from invest_advisor_bot.analysis.asset_ranking import rank_asset_snapshots
 from invest_advisor_bot.analysis.news_impact import NewsImpact, score_news_impacts
@@ -86,3 +87,27 @@ def test_alert_state_store_filters_recent_duplicates(tmp_path) -> None:
 
     assert first == ["risk:1", "news:abc"]
     assert second == ["rank:xyz"]
+
+
+def test_alert_state_store_respects_realert_after_minutes(tmp_path) -> None:
+    store = AlertStateStore(path=tmp_path / "alerts.json", suppression_minutes=180)
+
+    first = store.filter_alerts(
+        [
+            SimpleNamespace(
+                key="stock:daily:2026-03-23:AAPL",
+                metadata={"realert_after_minutes": 15},
+            )
+        ]
+    )
+    second = store.filter_alerts(
+        [
+            SimpleNamespace(
+                key="stock:daily:2026-03-23:AAPL",
+                metadata={"realert_after_minutes": 15},
+            )
+        ]
+    )
+
+    assert len(first) == 1
+    assert second == []

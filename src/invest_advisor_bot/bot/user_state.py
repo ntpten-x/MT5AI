@@ -15,6 +15,9 @@ class UserPreferences:
     preferred_sectors: tuple[str, ...] = ()
     stock_alert_threshold: float = 1.8
     daily_pick_enabled: bool = True
+    dashboard_execution_filter: str | None = None
+    approval_mode: str = "auto"
+    max_position_size_pct: float | None = None
 
 
 class UserStateStore:
@@ -39,6 +42,13 @@ class UserStateStore:
             preferred_sectors = tuple(str(item).strip() for item in payload.get("preferred_sectors", []) if str(item).strip()) if isinstance(payload, dict) else ()
             threshold_raw = payload.get("stock_alert_threshold", 1.8) if isinstance(payload, dict) else 1.8
             daily_pick_enabled = bool(payload.get("daily_pick_enabled", True)) if isinstance(payload, dict) else True
+            dashboard_execution_filter = self._normalize_dashboard_execution_filter(
+                payload.get("dashboard_execution_filter") if isinstance(payload, dict) else None
+            )
+            approval_mode = self._normalize_approval_mode(payload.get("approval_mode") if isinstance(payload, dict) else None)
+            max_position_size_pct = self._normalize_max_position_size(
+                payload.get("max_position_size_pct") if isinstance(payload, dict) else None
+            )
         try:
             threshold = float(threshold_raw)
         except (TypeError, ValueError):
@@ -48,6 +58,9 @@ class UserStateStore:
             preferred_sectors=preferred_sectors,
             stock_alert_threshold=threshold,
             daily_pick_enabled=daily_pick_enabled,
+            dashboard_execution_filter=dashboard_execution_filter,
+            approval_mode=approval_mode,
+            max_position_size_pct=max_position_size_pct,
         )
 
     def add_watchlist(self, conversation_key: str, ticker: str) -> UserPreferences:
@@ -63,6 +76,9 @@ class UserStateStore:
                 preferred_sectors=list(prefs.preferred_sectors),
                 stock_alert_threshold=prefs.stock_alert_threshold,
                 daily_pick_enabled=prefs.daily_pick_enabled,
+                dashboard_execution_filter=prefs.dashboard_execution_filter,
+                approval_mode=prefs.approval_mode,
+                max_position_size_pct=prefs.max_position_size_pct,
             )
             return self.get(conversation_key)
         with self._lock:
@@ -85,6 +101,9 @@ class UserStateStore:
                 preferred_sectors=list(prefs.preferred_sectors),
                 stock_alert_threshold=prefs.stock_alert_threshold,
                 daily_pick_enabled=prefs.daily_pick_enabled,
+                dashboard_execution_filter=prefs.dashboard_execution_filter,
+                approval_mode=prefs.approval_mode,
+                max_position_size_pct=prefs.max_position_size_pct,
             )
             return self.get(conversation_key)
         with self._lock:
@@ -103,6 +122,9 @@ class UserStateStore:
         preferred_sectors: list[str] | None = None,
         stock_alert_threshold: float | None = None,
         daily_pick_enabled: bool | None = None,
+        dashboard_execution_filter: str | None = None,
+        approval_mode: str | None = None,
+        max_position_size_pct: float | None = None,
     ) -> UserPreferences:
         if self._db is not None:
             current = self._get_db(conversation_key)
@@ -112,6 +134,17 @@ class UserStateStore:
                 preferred_sectors=preferred_sectors if preferred_sectors is not None else list(current.preferred_sectors),
                 stock_alert_threshold=stock_alert_threshold if stock_alert_threshold is not None else current.stock_alert_threshold,
                 daily_pick_enabled=daily_pick_enabled if daily_pick_enabled is not None else current.daily_pick_enabled,
+                dashboard_execution_filter=(
+                    self._normalize_dashboard_execution_filter(dashboard_execution_filter)
+                    if dashboard_execution_filter is not None
+                    else current.dashboard_execution_filter
+                ),
+                approval_mode=self._normalize_approval_mode(approval_mode) if approval_mode is not None else current.approval_mode,
+                max_position_size_pct=(
+                    self._normalize_max_position_size(max_position_size_pct)
+                    if max_position_size_pct is not None
+                    else current.max_position_size_pct
+                ),
             )
             return self.get(conversation_key)
         with self._lock:
@@ -122,6 +155,12 @@ class UserStateStore:
                 prefs["stock_alert_threshold"] = float(stock_alert_threshold)
             if daily_pick_enabled is not None:
                 prefs["daily_pick_enabled"] = bool(daily_pick_enabled)
+            if dashboard_execution_filter is not None:
+                prefs["dashboard_execution_filter"] = self._normalize_dashboard_execution_filter(dashboard_execution_filter)
+            if approval_mode is not None:
+                prefs["approval_mode"] = self._normalize_approval_mode(approval_mode)
+            if max_position_size_pct is not None:
+                prefs["max_position_size_pct"] = self._normalize_max_position_size(max_position_size_pct)
             self._state[conversation_key] = prefs
             self._persist()
         return self.get(conversation_key)
@@ -144,7 +183,8 @@ class UserStateStore:
         assert self._db is not None
         row = self._db.fetch_one(
             """
-            SELECT watchlist, preferred_sectors, stock_alert_threshold, daily_pick_enabled
+            SELECT watchlist, preferred_sectors, stock_alert_threshold, daily_pick_enabled, dashboard_execution_filter,
+                   approval_mode, max_position_size_pct
             FROM bot_user_preferences
             WHERE conversation_key = %s
             """,
@@ -152,7 +192,7 @@ class UserStateStore:
         )
         if row is None:
             return UserPreferences()
-        watchlist_raw, preferred_sectors_raw, threshold_raw, daily_pick_enabled = row
+        watchlist_raw, preferred_sectors_raw, threshold_raw, daily_pick_enabled, dashboard_execution_filter, approval_mode, max_position_size_pct = row
         watchlist = tuple(str(item).upper() for item in (watchlist_raw or []) if str(item).strip())
         preferred_sectors = tuple(str(item).strip() for item in (preferred_sectors_raw or []) if str(item).strip())
         try:
@@ -164,6 +204,9 @@ class UserStateStore:
             preferred_sectors=preferred_sectors,
             stock_alert_threshold=threshold,
             daily_pick_enabled=bool(daily_pick_enabled),
+            dashboard_execution_filter=self._normalize_dashboard_execution_filter(dashboard_execution_filter),
+            approval_mode=self._normalize_approval_mode(approval_mode),
+            max_position_size_pct=self._normalize_max_position_size(max_position_size_pct),
         )
 
     def _upsert_db(
@@ -174,6 +217,9 @@ class UserStateStore:
         preferred_sectors: list[str],
         stock_alert_threshold: float,
         daily_pick_enabled: bool,
+        dashboard_execution_filter: str | None,
+        approval_mode: str,
+        max_position_size_pct: float | None,
     ) -> None:
         assert self._db is not None
         self._db.execute(
@@ -184,15 +230,21 @@ class UserStateStore:
                 preferred_sectors,
                 stock_alert_threshold,
                 daily_pick_enabled,
+                dashboard_execution_filter,
+                approval_mode,
+                max_position_size_pct,
                 updated_at
             )
-            VALUES (%s, %s::jsonb, %s::jsonb, %s, %s, %s)
+            VALUES (%s, %s::jsonb, %s::jsonb, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (conversation_key)
             DO UPDATE SET
                 watchlist = EXCLUDED.watchlist,
                 preferred_sectors = EXCLUDED.preferred_sectors,
                 stock_alert_threshold = EXCLUDED.stock_alert_threshold,
                 daily_pick_enabled = EXCLUDED.daily_pick_enabled,
+                dashboard_execution_filter = EXCLUDED.dashboard_execution_filter,
+                approval_mode = EXCLUDED.approval_mode,
+                max_position_size_pct = EXCLUDED.max_position_size_pct,
                 updated_at = EXCLUDED.updated_at
             """,
             (
@@ -201,6 +253,37 @@ class UserStateStore:
                 json.dumps(preferred_sectors, ensure_ascii=False),
                 float(stock_alert_threshold),
                 bool(daily_pick_enabled),
+                self._normalize_dashboard_execution_filter(dashboard_execution_filter),
+                self._normalize_approval_mode(approval_mode),
+                self._normalize_max_position_size(max_position_size_pct),
                 datetime.now(timezone.utc),
             ),
         )
+
+    @staticmethod
+    def _normalize_dashboard_execution_filter(value: object) -> str | None:
+        normalized = str(value or "").strip().casefold().replace("-", "_")
+        if normalized in {"stock_pick", "macro_playbook", "macro_surprise"}:
+            return normalized
+        return None
+
+    @staticmethod
+    def _normalize_approval_mode(value: object) -> str:
+        normalized = str(value or "").strip().casefold().replace("-", "_")
+        if normalized in {"review", "review_only", "manual"}:
+            return "review"
+        if normalized in {"block", "blocked", "off"}:
+            return "blocked"
+        return "auto"
+
+    @staticmethod
+    def _normalize_max_position_size(value: object) -> float | None:
+        if value in (None, "", 0, 0.0):
+            return None
+        try:
+            normalized = float(value)
+        except (TypeError, ValueError):
+            return None
+        if normalized <= 0:
+            return None
+        return round(max(0.5, min(10.0, normalized)), 1)

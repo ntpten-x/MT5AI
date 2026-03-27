@@ -17,6 +17,7 @@ class PostgresStateBackend:
         self.database_url = database_url.strip()
         self._lock = RLock()
         self._schema_ready = False
+        self._vector_ready = False
         with self._shared_lock:
             self._connection_lock = self._shared_connection_locks.setdefault(self.database_url, RLock())
 
@@ -33,8 +34,23 @@ class PostgresStateBackend:
                     preferred_sectors JSONB NOT NULL DEFAULT '[]'::jsonb,
                     stock_alert_threshold DOUBLE PRECISION NOT NULL DEFAULT 1.8,
                     daily_pick_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    dashboard_execution_filter TEXT,
+                    approval_mode TEXT NOT NULL DEFAULT 'auto',
+                    max_position_size_pct DOUBLE PRECISION,
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
+                """,
+                """
+                ALTER TABLE bot_user_preferences
+                ADD COLUMN IF NOT EXISTS dashboard_execution_filter TEXT
+                """,
+                """
+                ALTER TABLE bot_user_preferences
+                ADD COLUMN IF NOT EXISTS approval_mode TEXT NOT NULL DEFAULT 'auto'
+                """,
+                """
+                ALTER TABLE bot_user_preferences
+                ADD COLUMN IF NOT EXISTS max_position_size_pct DOUBLE PRECISION
                 """,
                 """
                 CREATE TABLE IF NOT EXISTS bot_alert_state (
@@ -152,6 +168,34 @@ class PostgresStateBackend:
                     detail JSONB NOT NULL DEFAULT '{}'::jsonb
                 )
                 """,
+                """
+                CREATE TABLE IF NOT EXISTS bot_thesis_memory (
+                    id BIGSERIAL PRIMARY KEY,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    conversation_key TEXT,
+                    thesis_key TEXT NOT NULL UNIQUE,
+                    query_text TEXT,
+                    thesis_text TEXT NOT NULL,
+                    source_kind TEXT NOT NULL,
+                    tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    confidence_score DOUBLE PRECISION,
+                    embedding_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    detail JSONB NOT NULL DEFAULT '{}'::jsonb
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS bot_eval_artifact (
+                    id BIGSERIAL PRIMARY KEY,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    artifact_key TEXT NOT NULL UNIQUE,
+                    artifact_kind TEXT NOT NULL,
+                    conversation_key TEXT,
+                    model TEXT,
+                    fallback_used BOOLEAN NOT NULL DEFAULT FALSE,
+                    metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    detail JSONB NOT NULL DEFAULT '{}'::jsonb
+                )
+                """,
                 "CREATE INDEX IF NOT EXISTS idx_bot_alert_state_last_seen ON bot_alert_state (last_seen)",
                 "CREATE INDEX IF NOT EXISTS idx_bot_report_memory_day ON bot_report_memory (day_key)",
                 "CREATE INDEX IF NOT EXISTS idx_bot_portfolio_holdings_conversation_key ON bot_portfolio_holdings (conversation_key)",
@@ -163,6 +207,9 @@ class PostgresStateBackend:
                 "CREATE INDEX IF NOT EXISTS idx_bot_alert_audit_sent_at ON bot_alert_audit (sent_at)",
                 "CREATE INDEX IF NOT EXISTS idx_bot_stock_pick_scorecard_due_status ON bot_stock_pick_scorecard (status, due_at)",
                 "CREATE INDEX IF NOT EXISTS idx_bot_stock_pick_scorecard_created_at ON bot_stock_pick_scorecard (created_at DESC)",
+                "CREATE INDEX IF NOT EXISTS idx_bot_thesis_memory_created_at ON bot_thesis_memory (created_at DESC)",
+                "CREATE INDEX IF NOT EXISTS idx_bot_thesis_memory_conversation_key ON bot_thesis_memory (conversation_key, created_at DESC)",
+                "CREATE INDEX IF NOT EXISTS idx_bot_eval_artifact_created_at ON bot_eval_artifact (created_at DESC)",
             )
             def _ensure(cursor: Any) -> None:
                 for statement in statements:
@@ -175,6 +222,7 @@ class PostgresStateBackend:
                         raise
 
             self._run_with_retry(_ensure)
+            self._ensure_vector_support()
             self._schema_ready = True
 
     def execute(self, query: str, params: Sequence[Any] | None = None) -> None:
@@ -211,6 +259,11 @@ class PostgresStateBackend:
             return False
         return bool(row and row[0] == 1)
 
+    def vector_ready(self) -> bool:
+        if not self._schema_ready:
+            self.ensure_schema()
+        return self._vector_ready
+
     @classmethod
     def ping_database_url(cls, database_url: str) -> bool:
         if not database_url.strip():
@@ -244,6 +297,15 @@ class PostgresStateBackend:
                 raise
         if last_error is not None:
             raise last_error
+
+    def _ensure_vector_support(self) -> None:
+        try:
+            self.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            self.execute("ALTER TABLE bot_thesis_memory ADD COLUMN IF NOT EXISTS embedding vector(16)")
+            self.execute("CREATE INDEX IF NOT EXISTS idx_bot_thesis_memory_embedding ON bot_thesis_memory USING ivfflat (embedding vector_cosine_ops)")
+            self._vector_ready = True
+        except Exception:
+            self._vector_ready = False
 
     def _get_connection(self, psycopg: Any) -> Any:
         with self._shared_lock:

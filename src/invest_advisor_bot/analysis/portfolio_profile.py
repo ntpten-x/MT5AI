@@ -221,14 +221,22 @@ def _infer_market_regime(
     vix = _as_float((macro_context or {}).get("vix"))
     yield_10y = _as_float((macro_context or {}).get("tnx"))
     cpi_yoy = _as_float((macro_context or {}).get("cpi_yoy"))
+    yield_spread = _as_float((macro_context or {}).get("yield_spread_10y_2y"))
+    high_yield_spread = _as_float((macro_context or {}).get("high_yield_spread"))
 
-    if (vix is not None and vix >= 26.0) or downtrend_count >= max(2, uptrend_count + 1):
+    if (
+        (vix is not None and vix >= 26.0)
+        or (yield_spread is not None and yield_spread < 0)
+        or (high_yield_spread is not None and high_yield_spread >= 4.5)
+        or downtrend_count >= max(2, uptrend_count + 1)
+    ):
         return "risk_off"
     if (
         (vix is not None and vix <= 18.0)
         and uptrend_count >= max(2, downtrend_count + 1)
         and (yield_10y is None or yield_10y <= 4.4)
         and (cpi_yoy is None or cpi_yoy <= 3.3)
+        and (yield_spread is None or yield_spread >= 0.0)
     ):
         return "risk_on"
     return "neutral"
@@ -346,6 +354,8 @@ def _build_risk_watch(regime: MarketRegime, macro_context: Mapping[str, object] 
     vix = _as_float((macro_context or {}).get("vix"))
     yield_10y = _as_float((macro_context or {}).get("tnx"))
     cpi_yoy = _as_float((macro_context or {}).get("cpi_yoy"))
+    yield_spread = _as_float((macro_context or {}).get("yield_spread_10y_2y"))
+    high_yield_spread = _as_float((macro_context or {}).get("high_yield_spread"))
     parts: list[str] = []
     if vix is not None:
         parts.append(f"VIX {vix:.2f}")
@@ -353,6 +363,10 @@ def _build_risk_watch(regime: MarketRegime, macro_context: Mapping[str, object] 
         parts.append(f"US10Y {yield_10y:.2f}")
     if cpi_yoy is not None:
         parts.append(f"CPI YoY {cpi_yoy:.2f}%")
+    if yield_spread is not None:
+        parts.append(f"2s10s {yield_spread:.2f}")
+    if high_yield_spread is not None:
+        parts.append(f"HY Spread {high_yield_spread:.2f}")
     macro_line = " | ".join(parts) if parts else "macro data จำกัด"
     if regime == "risk_off":
         return f"จับตา {macro_line} หากความผันผวนเร่งขึ้นอีกควรเพิ่มเงินสดและลดสินทรัพย์เสี่ยงลง"

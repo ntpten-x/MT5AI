@@ -9,3 +9,19 @@ pydantic>=2.9.2
 pydantic-settings>=2.6.1
 python-telegram-bot[job-queue]>=20.7
 yfinance>=0.2.54
+duckdb>=1.2.0
+qdrant-client>=1.11.0
+great-expectations>=1.3.0
+feast>=0.47.0
+evidently>=0.7.0
+braintrust
+langfuse>=2.60.0
+databento>=0.39.0
+clickhouse-connect>=0.8.15
+kafka-python-ng>=2.2.3
+redis>=6.0.0
+vectorbt>=0.28.0
+prefect>=3.0.0
+dbt-core>=1.9.0
+# Optional extras if you prefer editable-install groups:
+# pip install -e .[observability,analytics,memory,quality,feature-store,evaluation,microstructure,streaming,backtesting,execution,semantic-layer]

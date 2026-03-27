@@ -65,6 +65,9 @@ BACKUP_TABLE_SPECS: tuple[BackupTableSpec, ...] = (
             "preferred_sectors",
             "stock_alert_threshold",
             "daily_pick_enabled",
+            "dashboard_execution_filter",
+            "approval_mode",
+            "max_position_size_pct",
             "updated_at",
         ),
         json_columns=("watchlist", "preferred_sectors"),
@@ -177,6 +180,15 @@ class BackupManager:
 
     def available(self) -> bool:
         return self._db is not None
+
+    def status(self) -> dict[str, Any]:
+        latest_backup = self.latest_backup_path()
+        return {
+            "available": self.available(),
+            "backup_dir": str(self.backup_dir),
+            "retention_days": self.retention_days,
+            "latest_backup_path": str(latest_backup) if latest_backup is not None else None,
+        }
 
     def latest_backup_path(self) -> Path | None:
         if not self.backup_dir.exists():

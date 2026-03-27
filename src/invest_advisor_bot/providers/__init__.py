@@ -1,9 +1,12 @@
 """External data providers for the investment advisor bot."""
 
 from .llm_client import (
+    DEFAULT_CEREBRAS_MODELS,
+    DEFAULT_CLOUDFLARE_MODELS,
     DEFAULT_GEMINI_MODELS,
     DEFAULT_GITHUB_MODELS,
     DEFAULT_GROQ_MODELS,
+    DEFAULT_HUGGINGFACE_MODELS,
     DEFAULT_OPENROUTER_FREE_MODELS,
     LLMProviderConfig,
     LLMTextResponse,
@@ -11,20 +14,41 @@ from .llm_client import (
     OpenAILLMClient,
     build_default_llm_client,
 )
-from .market_data_client import AssetQuote, EarningsEvent, MarketDataClient, OhlcvBar, StockFundamentals
+from .market_data_client import (
+    AssetQuote,
+    CompanyIntelligence,
+    EarningsEvent,
+    FilingEvent,
+    MacroEvent,
+    MacroMarketReaction,
+    MacroReactionAssetMove,
+    MacroSurpriseSignal,
+    MarketDataClient,
+    OhlcvBar,
+    StockFundamentals,
+)
 from .news_client import NewsArticle, NewsClient
 from .research_client import DEFAULT_RESEARCH_PROVIDER_ORDER, ResearchClient, ResearchFinding
 
 __all__ = [
     "AssetQuote",
+    "CompanyIntelligence",
+    "DEFAULT_CEREBRAS_MODELS",
+    "DEFAULT_CLOUDFLARE_MODELS",
     "DEFAULT_GEMINI_MODELS",
     "DEFAULT_GITHUB_MODELS",
     "DEFAULT_GROQ_MODELS",
+    "DEFAULT_HUGGINGFACE_MODELS",
     "DEFAULT_OPENROUTER_FREE_MODELS",
     "DEFAULT_RESEARCH_PROVIDER_ORDER",
     "EarningsEvent",
+    "FilingEvent",
     "LLMProviderConfig",
     "LLMTextResponse",
+    "MacroEvent",
+    "MacroMarketReaction",
+    "MacroReactionAssetMove",
+    "MacroSurpriseSignal",
     "MarketDataClient",
     "NewsArticle",
     "NewsClient",

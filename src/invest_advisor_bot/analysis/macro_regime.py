@@ -29,9 +29,25 @@ def assess_macro_regime(
     macro_context: Mapping[str, object] | None,
     asset_snapshots: Sequence[Mapping[str, object]],
 ) -> MacroRegimeAssessment:
-    vix = _as_float((macro_context or {}).get("vix"))
-    tnx = _as_float((macro_context or {}).get("tnx"))
-    cpi_yoy = _as_float((macro_context or {}).get("cpi_yoy"))
+    context = macro_context or {}
+    vix = _as_float(context.get("vix"))
+    tnx = _as_float(context.get("tnx"))
+    cpi_yoy = _as_float(context.get("cpi_yoy"))
+    core_cpi_yoy = _as_float(context.get("core_cpi_yoy"))
+    core_pce_yoy = _as_float(context.get("core_pce_yoy"))
+    yield_spread = _as_float(context.get("yield_spread_10y_2y"))
+    high_yield_spread = _as_float(context.get("high_yield_spread"))
+    unemployment_rate = _as_float(context.get("unemployment_rate"))
+    payrolls_mom_k = _as_float(context.get("payrolls_mom_k"))
+    gdp_qoq_annualized = _as_float(context.get("gdp_qoq_annualized"))
+    personal_spending_mom = _as_float(context.get("personal_spending_mom"))
+    alfred_payroll_revision_k = _as_float(context.get("alfred_payroll_revision_k"))
+    alfred_cpi_revision_pct = _as_float(context.get("alfred_cpi_revision_pct"))
+    cftc_equity_net_pct_oi = _as_float(context.get("cftc_equity_net_pct_oi"))
+    cftc_ust10y_net_pct_oi = _as_float(context.get("cftc_ust10y_net_pct_oi"))
+    cftc_gold_net_pct_oi = _as_float(context.get("cftc_gold_net_pct_oi"))
+    finra_spy_short_volume_ratio = _as_float(context.get("finra_spy_short_volume_ratio"))
+    finra_qqq_short_volume_ratio = _as_float(context.get("finra_qqq_short_volume_ratio"))
 
     growth_signal = 0.0
     inflation_signal = 0.0
@@ -58,53 +74,113 @@ def assess_macro_regime(
     if vix is not None:
         if vix <= 18:
             growth_signal += 0.7
-            rationale.append(f"VIX ต่ำ ({vix:.1f})")
+            rationale.append(f"VIX low ({vix:.1f})")
         elif vix >= 26:
             growth_signal -= 1.0
-            rationale.append(f"VIX สูง ({vix:.1f})")
+            rationale.append(f"VIX high ({vix:.1f})")
     if tnx is not None:
         if tnx <= 4.1:
             growth_signal += 0.5
         elif tnx >= 4.6:
             growth_signal -= 0.6
             inflation_signal += 0.7
-            rationale.append(f"US10Y สูง ({tnx:.2f})")
+            rationale.append(f"US 10Y yield high ({tnx:.2f})")
     if cpi_yoy is not None:
         if cpi_yoy <= 2.8:
             inflation_signal -= 0.8
-            rationale.append(f"เงินเฟ้อชะลอ ({cpi_yoy:.1f}%)")
+            rationale.append(f"headline CPI cooling ({cpi_yoy:.1f}%)")
         elif cpi_yoy >= 3.4:
             inflation_signal += 1.0
-            rationale.append(f"เงินเฟ้อเด้ง ({cpi_yoy:.1f}%)")
+            rationale.append(f"headline CPI re-accelerating ({cpi_yoy:.1f}%)")
+    if core_cpi_yoy is not None and core_cpi_yoy >= 3.3:
+        inflation_signal += 0.5
+        rationale.append(f"core CPI sticky ({core_cpi_yoy:.1f}%)")
+    if core_pce_yoy is not None:
+        if core_pce_yoy >= 2.9:
+            inflation_signal += 0.5
+            rationale.append(f"core PCE sticky ({core_pce_yoy:.1f}%)")
+        elif core_pce_yoy <= 2.4:
+            inflation_signal -= 0.3
+    if yield_spread is not None and yield_spread < 0:
+        growth_signal -= 0.6
+        market_signal -= 0.2
+        rationale.append(f"yield curve inverted ({yield_spread:.2f})")
+    if high_yield_spread is not None and high_yield_spread >= 4.5:
+        growth_signal -= 0.5
+        market_signal -= 0.3
+        rationale.append(f"credit spread wide ({high_yield_spread:.2f})")
+    if unemployment_rate is not None and unemployment_rate >= 4.2:
+        growth_signal -= 0.4
+        rationale.append(f"labor market softening ({unemployment_rate:.1f}%)")
+    if payrolls_mom_k is not None and payrolls_mom_k < 125:
+        growth_signal -= 0.3
+        rationale.append(f"payroll growth soft ({payrolls_mom_k:.0f}k)")
+    if gdp_qoq_annualized is not None and gdp_qoq_annualized < 1.5:
+        growth_signal -= 0.5
+        rationale.append(f"GDP growth slowing ({gdp_qoq_annualized:.1f}%)")
+    if personal_spending_mom is not None and personal_spending_mom < 0:
+        growth_signal -= 0.3
+        rationale.append(f"personal spending negative ({personal_spending_mom:.1f}%)")
+    if alfred_payroll_revision_k is not None and alfred_payroll_revision_k <= -40:
+        growth_signal -= 0.5
+        rationale.append(f"ALFRED payroll revision weak ({alfred_payroll_revision_k:.0f}k)")
+    if alfred_cpi_revision_pct is not None and alfred_cpi_revision_pct >= 0.15:
+        inflation_signal += 0.2
+        rationale.append(f"CPI revisions moved higher ({alfred_cpi_revision_pct:.2f}%)")
+    if cftc_equity_net_pct_oi is not None and cftc_equity_net_pct_oi >= 15:
+        market_signal -= 0.3
+        rationale.append(f"CFTC equity positioning crowded ({cftc_equity_net_pct_oi:.1f}%)")
+    if cftc_ust10y_net_pct_oi is not None and cftc_ust10y_net_pct_oi <= -10:
+        growth_signal -= 0.2
+        inflation_signal += 0.2
+        rationale.append(f"CFTC UST 10Y positioning pressures duration ({cftc_ust10y_net_pct_oi:.1f}%)")
+    if cftc_gold_net_pct_oi is not None and cftc_gold_net_pct_oi >= 10:
+        inflation_signal += 0.1
+    if (
+        (finra_spy_short_volume_ratio is not None and finra_spy_short_volume_ratio >= 0.55)
+        or (finra_qqq_short_volume_ratio is not None and finra_qqq_short_volume_ratio >= 0.55)
+    ):
+        market_signal -= 0.35
+        rationale.append("FINRA short flow elevated")
+    if (
+        cftc_equity_net_pct_oi is not None
+        and cftc_equity_net_pct_oi >= 15
+        and (
+            (finra_spy_short_volume_ratio is not None and finra_spy_short_volume_ratio >= 0.55)
+            or (finra_qqq_short_volume_ratio is not None and finra_qqq_short_volume_ratio >= 0.55)
+        )
+    ):
+        market_signal -= 0.2
+        rationale.append("crowded long risk with hedge pressure still high")
 
     if equity_uptrends >= max(2, equity_downtrends + 1):
         growth_signal += 0.8
-        rationale.append("หุ้นหลักยังยืนแนวโน้มบวก")
+        rationale.append("major equity indexes still trend higher")
     elif equity_downtrends >= max(2, equity_uptrends + 1):
         growth_signal -= 0.9
-        rationale.append("หุ้นหลักเริ่มเสียโมเมนตัม")
+        rationale.append("major equity indexes losing momentum")
 
     if defensive_uptrends >= 2:
         inflation_signal += 0.2
         market_signal -= 0.2
 
     regime: MacroRegimeName = "mixed_transition"
-    headline = "ภาพมหภาคยังผสมกัน"
+    headline = "macro signals remain mixed"
     if growth_signal >= 1.0 and inflation_signal <= 0.2 and market_signal >= 0.3:
         regime = "soft_landing"
-        headline = "เศรษฐกิจชะลอแบบควบคุมได้ ตลาดรับความเสี่ยงได้"
+        headline = "growth is holding up while risk appetite stays constructive"
     elif growth_signal >= 0.6 and inflation_signal <= -0.4 and market_signal >= 0.2:
         regime = "disinflationary_growth"
-        headline = "การเติบโตยังพอไปต่อพร้อมเงินเฟ้อผ่อนลง"
+        headline = "growth remains supported while inflation pressure fades"
     elif inflation_signal >= 0.8 and growth_signal >= -0.2:
         regime = "inflation_rebound"
-        headline = "เงินเฟ้อมีความเสี่ยงกลับมา ตลาดต้องเลือกสินทรัพย์มากขึ้น"
+        headline = "inflation risk is re-accelerating and valuation pressure is building"
     elif growth_signal <= -1.0 and inflation_signal <= 0.4:
         regime = "recession_risk"
-        headline = "ความเสี่ยงเศรษฐกิจชะลอลงแรงเพิ่มขึ้น"
+        headline = "growth and market internals point to rising recession risk"
     elif growth_signal <= -0.5 and inflation_signal >= 0.8:
         regime = "stagflation_risk"
-        headline = "เสี่ยงโตช้าแต่เงินเฟ้อยังดื้อ"
+        headline = "growth is slowing while inflation remains sticky"
 
     confidence = min(0.95, 0.45 + (abs(growth_signal) + abs(inflation_signal) + abs(market_signal)) * 0.12)
     return MacroRegimeAssessment(
@@ -114,7 +190,7 @@ def assess_macro_regime(
         inflation_signal=round(inflation_signal, 2),
         market_signal=round(market_signal, 2),
         headline=headline,
-        rationale=tuple(dict.fromkeys(rationale))[:6] or ("มหภาคยังไม่ชัดเจน",),
+        rationale=tuple(dict.fromkeys(rationale))[:6] or ("macro backdrop is still inconclusive",),
     )
 
 

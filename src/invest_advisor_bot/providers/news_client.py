@@ -15,6 +15,8 @@ import httpx
 from cachetools import TTLCache
 from loguru import logger
 
+from invest_advisor_bot.runtime_diagnostics import diagnostics
+
 from invest_advisor_bot.universe import StockUniverseMember
 
 DEFAULT_GOOGLE_NEWS_QUERY = (
@@ -46,6 +48,7 @@ class NewsClient:
     ) -> None:
         self.timeout = timeout
         self.user_agent = user_agent
+        self.cache_ttl_seconds = cache_ttl_seconds
         self._http_client: httpx.AsyncClient | None = None
         self._cache_lock = RLock()
         self._feed_cache: TTLCache[tuple[str, int], list[NewsArticle]] = TTLCache(
@@ -122,19 +125,41 @@ class NewsClient:
             if cache_key in self._feed_cache:
                 return list(self._feed_cache[cache_key] or [])
 
+        started_at = asyncio.get_running_loop().time()
         try:
             client = self._get_http_client()
             response = await client.get(feed_url)
             response.raise_for_status()
         except httpx.HTTPError as exc:
+            diagnostics.record_provider_latency(
+                service="news_client",
+                provider="google_news_rss",
+                operation="fetch_feed",
+                latency_ms=(asyncio.get_running_loop().time() - started_at) * 1000.0,
+                success=False,
+            )
             logger.warning("Failed to fetch news feed {}: {}", feed_url, exc)
             return []
 
         try:
             articles = self._parse_rss(response.text, limit=limit)
         except Exception as exc:
+            diagnostics.record_provider_latency(
+                service="news_client",
+                provider="google_news_rss",
+                operation="fetch_feed",
+                latency_ms=(asyncio.get_running_loop().time() - started_at) * 1000.0,
+                success=False,
+            )
             logger.exception("Failed to parse news feed {}: {}", feed_url, exc)
             return []
+        diagnostics.record_provider_latency(
+            service="news_client",
+            provider="google_news_rss",
+            operation="fetch_feed",
+            latency_ms=(asyncio.get_running_loop().time() - started_at) * 1000.0,
+            success=True,
+        )
         with self._cache_lock:
             self._feed_cache[cache_key] = list(articles)
         return articles
@@ -144,6 +169,17 @@ class NewsClient:
         self._http_client = None
         if client is not None:
             await client.aclose()
+
+    def status(self) -> dict[str, object]:
+        with self._cache_lock:
+            cached_feeds = len(self._feed_cache)
+        return {
+            "available": True,
+            "timeout_seconds": self.timeout,
+            "user_agent": self.user_agent,
+            "cache_ttl_seconds": self.cache_ttl_seconds,
+            "cached_feeds": cached_feeds,
+        }
 
     @staticmethod
     def build_google_news_url(
