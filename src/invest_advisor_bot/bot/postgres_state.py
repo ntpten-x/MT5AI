@@ -196,6 +196,38 @@ class PostgresStateBackend:
                     detail JSONB NOT NULL DEFAULT '{}'::jsonb
                 )
                 """,
+                """
+                CREATE TABLE IF NOT EXISTS bot_ai_simulated_portfolio_state (
+                    portfolio_key TEXT PRIMARY KEY,
+                    starting_cash DOUBLE PRECISION NOT NULL,
+                    cash DOUBLE PRECISION NOT NULL,
+                    realized_pnl DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    holdings JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    last_rebalanced_at TIMESTAMPTZ
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS bot_ai_simulated_portfolio_trade (
+                    id BIGSERIAL PRIMARY KEY,
+                    portfolio_key TEXT NOT NULL,
+                    trade_id TEXT NOT NULL UNIQUE,
+                    action TEXT NOT NULL,
+                    ticker TEXT NOT NULL,
+                    quantity DOUBLE PRECISION NOT NULL,
+                    price DOUBLE PRECISION NOT NULL,
+                    notional DOUBLE PRECISION NOT NULL,
+                    label TEXT,
+                    asset_type TEXT,
+                    rationale TEXT,
+                    confidence_score DOUBLE PRECISION,
+                    coverage_score DOUBLE PRECISION,
+                    occurred_at TIMESTAMPTZ NOT NULL,
+                    detail JSONB NOT NULL DEFAULT '{}'::jsonb
+                )
+                """,
                 "CREATE INDEX IF NOT EXISTS idx_bot_alert_state_last_seen ON bot_alert_state (last_seen)",
                 "CREATE INDEX IF NOT EXISTS idx_bot_report_memory_day ON bot_report_memory (day_key)",
                 "CREATE INDEX IF NOT EXISTS idx_bot_portfolio_holdings_conversation_key ON bot_portfolio_holdings (conversation_key)",
@@ -210,6 +242,8 @@ class PostgresStateBackend:
                 "CREATE INDEX IF NOT EXISTS idx_bot_thesis_memory_created_at ON bot_thesis_memory (created_at DESC)",
                 "CREATE INDEX IF NOT EXISTS idx_bot_thesis_memory_conversation_key ON bot_thesis_memory (conversation_key, created_at DESC)",
                 "CREATE INDEX IF NOT EXISTS idx_bot_eval_artifact_created_at ON bot_eval_artifact (created_at DESC)",
+                "CREATE INDEX IF NOT EXISTS idx_bot_ai_sim_portfolio_updated_at ON bot_ai_simulated_portfolio_state (updated_at DESC)",
+                "CREATE INDEX IF NOT EXISTS idx_bot_ai_sim_trade_portfolio_at ON bot_ai_simulated_portfolio_trade (portfolio_key, occurred_at DESC)",
             )
             def _ensure(cursor: Any) -> None:
                 for statement in statements:

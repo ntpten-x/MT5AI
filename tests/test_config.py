@@ -174,3 +174,54 @@ def test_settings_accepts_langfuse_human_review_and_policy_configuration(
     assert settings.dbt_semantic_layer_enabled is True
     assert settings.dbt_semantic_project_name == "advisor_semantic"
     assert settings.dbt_semantic_target_schema == "analytics_prod"
+
+
+def test_settings_accepts_ai_simulated_portfolio_configuration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text("system", encoding="utf-8")
+
+    monkeypatch.setenv("TELEGRAM_TOKEN", "token")
+    monkeypatch.setenv("AI_SIM_PORTFOLIO_ENABLED", "true")
+    monkeypatch.setenv("AI_SIM_PORTFOLIO_STATE_PATH", str(tmp_path / "ai_portfolio.json"))
+    monkeypatch.setenv("AI_SIM_PORTFOLIO_STARTING_CASH_USD", "2500")
+    monkeypatch.setenv("AI_SIM_PORTFOLIO_MAX_POSITIONS", "6")
+    monkeypatch.setenv("AI_SIM_PORTFOLIO_MAX_POSITION_PCT", "0.2")
+    monkeypatch.setenv("AI_SIM_PORTFOLIO_MIN_CASH_PCT", "0.12")
+    monkeypatch.setenv("AI_SIM_PORTFOLIO_MIN_TRADE_NOTIONAL_USD", "30")
+    monkeypatch.setenv("AI_SIM_PORTFOLIO_REBALANCE_INTERVAL_MINUTES", "480")
+    monkeypatch.setenv("AI_SIM_PORTFOLIO_CORE_TICKERS", "SPY,QQQ,GLD")
+    monkeypatch.setenv("AI_SIM_PORTFOLIO_PROFILE", "balanced")
+    monkeypatch.setenv("AI_SIM_PORTFOLIO_ALLOWED_ASSET_TYPES", "etf,gold")
+    monkeypatch.setenv("AI_SIM_PORTFOLIO_ALLOW_FRACTIONAL", "false")
+
+    settings = Settings(_env_file=None, system_prompt_path=prompt_path, logs_dir=tmp_path / "logs")
+
+    assert settings.ai_simulated_portfolio_enabled is True
+    assert settings.ai_simulated_portfolio_starting_cash_usd == 2500
+    assert settings.ai_simulated_portfolio_max_positions == 6
+    assert settings.ai_simulated_portfolio_max_position_pct == 0.2
+    assert settings.ai_simulated_portfolio_min_cash_pct == 0.12
+    assert settings.ai_simulated_portfolio_min_trade_notional_usd == 30
+    assert settings.ai_simulated_portfolio_rebalance_interval_minutes == 480
+    assert settings.ai_simulated_portfolio_core_tickers == "SPY,QQQ,GLD"
+    assert settings.ai_simulated_portfolio_profile == "balanced"
+    assert settings.ai_simulated_portfolio_allowed_asset_types == "etf,gold"
+    assert settings.ai_simulated_portfolio_allow_fractional is False
+
+
+def test_settings_require_webhook_url_when_transport_is_webhook(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text("system", encoding="utf-8")
+    monkeypatch.setenv("TELEGRAM_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_TRANSPORT", "webhook")
+
+    settings = Settings(_env_file=None, system_prompt_path=prompt_path, logs_dir=tmp_path / "logs")
+
+    with pytest.raises(ValueError, match="TELEGRAM_WEBHOOK_URL"):
+        settings.validate_runtime()

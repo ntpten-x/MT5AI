@@ -16,6 +16,7 @@ DEFAULT_LOGS_DIR = PROJECT_ROOT / "logs"
 DEFAULT_ALERT_STATE_PATH = PROJECT_ROOT / "data" / "alert_state.json"
 DEFAULT_USER_STATE_PATH = PROJECT_ROOT / "data" / "user_state.json"
 DEFAULT_PORTFOLIO_STATE_PATH = PROJECT_ROOT / "data" / "portfolio_state.json"
+DEFAULT_AI_SIMULATED_PORTFOLIO_STATE_PATH = PROJECT_ROOT / "data" / "ai_simulated_portfolio.json"
 DEFAULT_SECTOR_ROTATION_STATE_PATH = PROJECT_ROOT / "data" / "sector_rotation_state.json"
 DEFAULT_REPORT_MEMORY_PATH = PROJECT_ROOT / "data" / "report_memory.json"
 DEFAULT_RUNTIME_HISTORY_PATH = PROJECT_ROOT / "data" / "runtime_history.json"
@@ -47,6 +48,15 @@ class Settings(BaseSettings):
 
     telegram_token: str = Field(default="", validation_alias="TELEGRAM_TOKEN")
     telegram_report_chat_id: str = Field(default="", validation_alias="TELEGRAM_REPORT_CHAT_ID")
+    telegram_transport: str = Field(default="polling", validation_alias="TELEGRAM_TRANSPORT")
+    telegram_webhook_url: str = Field(default="", validation_alias="TELEGRAM_WEBHOOK_URL")
+    telegram_webhook_path: str = Field(default="/telegram/webhook", validation_alias="TELEGRAM_WEBHOOK_PATH")
+    telegram_webhook_secret_token: str = Field(default="", validation_alias="TELEGRAM_WEBHOOK_SECRET_TOKEN")
+    telegram_webhook_listen: str = Field(default="0.0.0.0", validation_alias="TELEGRAM_WEBHOOK_LISTEN")
+    telegram_webhook_port: int = Field(
+        default_factory=lambda: int(os.environ.get("PORT", "10000")),
+        validation_alias="TELEGRAM_WEBHOOK_PORT",
+    )
     database_url: str = Field(default="", validation_alias="DATABASE_URL")
 
     llm_api_key: str = Field(default="", validation_alias="LLM_API_KEY")
@@ -219,6 +229,45 @@ class Settings(BaseSettings):
     alert_state_path: Path = Field(default=DEFAULT_ALERT_STATE_PATH, validation_alias="ALERT_STATE_PATH")
     user_state_path: Path = Field(default=DEFAULT_USER_STATE_PATH, validation_alias="USER_STATE_PATH")
     portfolio_state_path: Path = Field(default=DEFAULT_PORTFOLIO_STATE_PATH, validation_alias="PORTFOLIO_STATE_PATH")
+    ai_simulated_portfolio_enabled: bool = Field(default=True, validation_alias="AI_SIM_PORTFOLIO_ENABLED")
+    ai_simulated_portfolio_state_path: Path = Field(
+        default=DEFAULT_AI_SIMULATED_PORTFOLIO_STATE_PATH,
+        validation_alias="AI_SIM_PORTFOLIO_STATE_PATH",
+    )
+    ai_simulated_portfolio_starting_cash_usd: float = Field(
+        default=1000.0,
+        validation_alias="AI_SIM_PORTFOLIO_STARTING_CASH_USD",
+    )
+    ai_simulated_portfolio_max_positions: int = Field(default=5, validation_alias="AI_SIM_PORTFOLIO_MAX_POSITIONS")
+    ai_simulated_portfolio_max_position_pct: float = Field(
+        default=0.25,
+        validation_alias="AI_SIM_PORTFOLIO_MAX_POSITION_PCT",
+    )
+    ai_simulated_portfolio_min_cash_pct: float = Field(default=0.10, validation_alias="AI_SIM_PORTFOLIO_MIN_CASH_PCT")
+    ai_simulated_portfolio_min_trade_notional_usd: float = Field(
+        default=25.0,
+        validation_alias="AI_SIM_PORTFOLIO_MIN_TRADE_NOTIONAL_USD",
+    )
+    ai_simulated_portfolio_rebalance_interval_minutes: int = Field(
+        default=360,
+        validation_alias="AI_SIM_PORTFOLIO_REBALANCE_INTERVAL_MINUTES",
+    )
+    ai_simulated_portfolio_core_tickers: str = Field(
+        default="SPY,QQQ,VTI,VOO,GLD,IAU,TLT",
+        validation_alias="AI_SIM_PORTFOLIO_CORE_TICKERS",
+    )
+    ai_simulated_portfolio_profile: str = Field(
+        default="growth",
+        validation_alias="AI_SIM_PORTFOLIO_PROFILE",
+    )
+    ai_simulated_portfolio_allowed_asset_types: str = Field(
+        default="stock,etf,gold",
+        validation_alias="AI_SIM_PORTFOLIO_ALLOWED_ASSET_TYPES",
+    )
+    ai_simulated_portfolio_allow_fractional: bool = Field(
+        default=True,
+        validation_alias="AI_SIM_PORTFOLIO_ALLOW_FRACTIONAL",
+    )
     sector_rotation_state_path: Path = Field(
         default=DEFAULT_SECTOR_ROTATION_STATE_PATH,
         validation_alias="SECTOR_ROTATION_STATE_PATH",
@@ -495,6 +544,14 @@ class Settings(BaseSettings):
             )
         return normalized
 
+    @field_validator("telegram_transport")
+    @classmethod
+    def validate_telegram_transport(cls, value: str) -> str:
+        normalized = value.strip().casefold() or "polling"
+        if normalized not in {"polling", "webhook"}:
+            raise ValueError("TELEGRAM_TRANSPORT must be polling or webhook")
+        return normalized
+
     @property
     def project_root(self) -> Path:
         return PROJECT_ROOT
@@ -504,6 +561,8 @@ class Settings(BaseSettings):
             raise ValueError("TELEGRAM_TOKEN is required")
         if not self.system_prompt_path.exists():
             raise ValueError(f"System prompt file not found: {self.system_prompt_path}")
+        if self.telegram_transport == "webhook" and not self.telegram_webhook_url.strip():
+            raise ValueError("TELEGRAM_WEBHOOK_URL is required when TELEGRAM_TRANSPORT=webhook")
 
     def llm_available(self) -> bool:
         return bool(

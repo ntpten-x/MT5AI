@@ -168,7 +168,27 @@ Health endpoint:
 
 `/health` stays lightweight for platform probes. `/diagnostics` returns the structured runtime snapshot for external monitoring, including uptime, DB state, provider circuit state, MLflow state, and service/provider configuration summaries. `/metrics` exports the same runtime state in Prometheus text format.
 
-Telegram operators can also use `/status`, `/dashboard`, `/analyst`, `/reviewqueue`, and `/reviewdone` to inspect the streaming, cache, warehouse, semantic analyst, and human-review stack from the report chat.
+Telegram operators can also use `/status`, `/dashboard`, `/analyst`, `/reviewqueue`, and `/reviewdone` to inspect the streaming, cache, warehouse, semantic analyst, and human-review stack from the report chat. The bot also exposes `/ai_portfolio`, `/ai_trades`, `/ai_performance`, `/ai_rebalance`, and `/ai_reset` for the built-in simulated AI portfolio. Use `/ai_rebalance conservative|balanced|growth` or `/ai_reset 1000 balanced` to switch policy. On Render with Telegram polling, keep only one running bot instance or Telegram will terminate the duplicate `getUpdates` session.
+
+Recommended Render transport:
+
+```env
+TELEGRAM_TRANSPORT=webhook
+TELEGRAM_WEBHOOK_URL=https://your-service.onrender.com
+TELEGRAM_WEBHOOK_PATH=/telegram/webhook
+TELEGRAM_WEBHOOK_SECRET_TOKEN=replace-with-random-secret
+TELEGRAM_WEBHOOK_LISTEN=0.0.0.0
+TELEGRAM_WEBHOOK_PORT=10000
+```
+
+Go-live hardening checklist:
+
+1. Rotate every token and API key that was previously shared in chat or logs.
+2. Use `TELEGRAM_TRANSPORT=webhook` on Render so only one public bot instance receives updates.
+3. Keep exactly one live deployment for the Telegram bot token; no local polling process should run in parallel.
+4. Set `TELEGRAM_WEBHOOK_SECRET_TOKEN` to a random secret before production.
+5. Verify `/status`, `/ai_portfolio`, `/market_update`, and one scheduled report after deploy.
+6. Watch provider rate-limit warnings for 3-7 days before changing policy thresholds.
 
 ## Important Environment Variables
 
@@ -202,6 +222,18 @@ EIA_API_KEY=
 BEA_API_KEY=
 OPENBB_PAT=
 OPENBB_BASE_URL=
+AI_SIM_PORTFOLIO_ENABLED=true
+AI_SIM_PORTFOLIO_STATE_PATH=data/ai_simulated_portfolio.json
+AI_SIM_PORTFOLIO_STARTING_CASH_USD=1000
+AI_SIM_PORTFOLIO_MAX_POSITIONS=5
+AI_SIM_PORTFOLIO_MAX_POSITION_PCT=0.25
+AI_SIM_PORTFOLIO_MIN_CASH_PCT=0.10
+AI_SIM_PORTFOLIO_MIN_TRADE_NOTIONAL_USD=25
+AI_SIM_PORTFOLIO_REBALANCE_INTERVAL_MINUTES=360
+AI_SIM_PORTFOLIO_CORE_TICKERS=SPY,QQQ,VTI,VOO,GLD,IAU,TLT
+AI_SIM_PORTFOLIO_PROFILE=growth
+AI_SIM_PORTFOLIO_ALLOWED_ASSET_TYPES=stock,etf,gold
+AI_SIM_PORTFOLIO_ALLOW_FRACTIONAL=true
 QDRANT_ENABLED=false
 QDRANT_URL=
 QDRANT_API_KEY=

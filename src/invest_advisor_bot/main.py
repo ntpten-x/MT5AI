@@ -13,6 +13,7 @@ from invest_advisor_bot.analytics_warehouse import AnalyticsWarehouse
 from invest_advisor_bot.backtesting import BacktestingEngine
 from invest_advisor_bot.braintrust_observer import BraintrustObserver
 from invest_advisor_bot.bot.alert_state import AlertStateStore
+from invest_advisor_bot.bot.ai_simulated_portfolio_state import AISimulatedPortfolioStateStore
 from invest_advisor_bot.bot.backup_manager import BackupManager
 from invest_advisor_bot.bot.health_check import (
     set_health_details_provider,
@@ -52,6 +53,7 @@ from invest_advisor_bot.runtime_diagnostics import diagnostics
 from invest_advisor_bot.runtime_status import collect_runtime_snapshot, sync_service_diagnostics
 from invest_advisor_bot.semantic_analyst import SemanticAnalyst
 from invest_advisor_bot.services.recommendation_service import RecommendationService
+from invest_advisor_bot.services.ai_simulated_portfolio import AISimulatedPortfolioService
 from invest_advisor_bot.thesis_vector_store import ThesisVectorStore
 from invest_advisor_bot.dbt_semantic_layer import DbtSemanticLayer
 
@@ -96,6 +98,10 @@ def build_application(settings: Settings, *, database_url: str | None = None):
     user_state_store = UserStateStore(path=settings.user_state_path, database_url=effective_database_url)
     portfolio_state_store = PortfolioStateStore(
         path=settings.portfolio_state_path,
+        database_url=effective_database_url,
+    )
+    ai_simulated_portfolio_state_store = AISimulatedPortfolioStateStore(
+        path=settings.ai_simulated_portfolio_state_path,
         database_url=effective_database_url,
     )
     sector_rotation_state_store = SectorRotationStateStore(
@@ -403,6 +409,30 @@ def build_application(settings: Settings, *, database_url: str | None = None):
             experiment_name=settings.mlflow_experiment_name,
         ),
     )
+    ai_simulated_portfolio_service = AISimulatedPortfolioService(
+        recommendation_service=recommendation_service,
+        market_data_client=market_data_client,
+        news_client=news_client,
+        research_client=research_client,
+        state_store=ai_simulated_portfolio_state_store,
+        enabled=settings.ai_simulated_portfolio_enabled,
+        starting_cash_usd=settings.ai_simulated_portfolio_starting_cash_usd,
+        max_positions=settings.ai_simulated_portfolio_max_positions,
+        max_position_pct=settings.ai_simulated_portfolio_max_position_pct,
+        min_cash_pct=settings.ai_simulated_portfolio_min_cash_pct,
+        min_trade_notional_usd=settings.ai_simulated_portfolio_min_trade_notional_usd,
+        rebalance_interval_minutes=settings.ai_simulated_portfolio_rebalance_interval_minutes,
+        core_tickers=tuple(
+            item.strip().upper() for item in settings.ai_simulated_portfolio_core_tickers.split(",") if item.strip()
+        ),
+        profile_name=settings.ai_simulated_portfolio_profile,
+        allowed_asset_types=tuple(
+            item.strip().lower()
+            for item in settings.ai_simulated_portfolio_allowed_asset_types.split(",")
+            if item.strip()
+        ),
+        allow_fractional=settings.ai_simulated_portfolio_allow_fractional,
+    )
     return create_application(
         bot_token=settings.telegram_token,
         recommendation_service=recommendation_service,
@@ -433,6 +463,8 @@ def build_application(settings: Settings, *, database_url: str | None = None):
         report_memory_store=report_memory_store,
         user_state_store=user_state_store,
         portfolio_state_store=portfolio_state_store,
+        ai_simulated_portfolio_state_store=ai_simulated_portfolio_state_store,
+        ai_simulated_portfolio_service=ai_simulated_portfolio_service,
         runtime_history_store=runtime_history_store,
         backup_manager=backup_manager,
         logs_dir=settings.logs_dir,
@@ -450,6 +482,10 @@ def build_application(settings: Settings, *, database_url: str | None = None):
         event_bus_consumer_poll_interval_seconds=settings.event_bus_consumer_poll_interval_seconds,
         live_stream_max_events=settings.live_stream_max_events,
         live_stream_spread_alert_bps=settings.live_stream_spread_alert_bps,
+        telegram_transport=settings.telegram_transport,
+        telegram_webhook_url=settings.telegram_webhook_url,
+        telegram_webhook_path=settings.telegram_webhook_path,
+        telegram_webhook_port=settings.telegram_webhook_port,
         jobs_enabled=settings.jobs_enabled,
         daily_digest_hour_utc=settings.daily_digest_hour_utc,
         daily_digest_minute_utc=settings.daily_digest_minute_utc,
@@ -460,6 +496,7 @@ def build_application(settings: Settings, *, database_url: str | None = None):
         closing_report_hour_utc=settings.closing_report_hour_utc,
         closing_report_minute_utc=settings.closing_report_minute_utc,
         risk_check_interval_minutes=settings.risk_check_interval_minutes,
+        ai_simulated_portfolio_rebalance_interval_minutes=settings.ai_simulated_portfolio_rebalance_interval_minutes,
         maintenance_cleanup_interval_minutes=settings.maintenance_cleanup_interval_minutes,
         earnings_alert_days_ahead=settings.earnings_alert_days_ahead,
         earnings_result_lookback_days=settings.earnings_result_lookback_days,
@@ -508,6 +545,41 @@ def _build_diagnostics_payload(application: object) -> dict[str, Any]:
     }
 
 
+def _normalize_webhook_public_path(path: str) -> str:
+    normalized = "/" + path.strip().strip("/")
+    return normalized if normalized != "/" else "/telegram/webhook"
+
+
+def _normalize_webhook_run_path(path: str) -> str:
+    return _normalize_webhook_public_path(path).lstrip("/")
+
+
+def _should_start_health_server(settings: Settings) -> bool:
+    if not settings.health_check_enabled:
+        return False
+    if settings.telegram_transport != "webhook":
+        return True
+    return settings.health_check_port != settings.telegram_webhook_port
+
+
+def _run_telegram_application(application: object, settings: Settings) -> None:
+    if settings.telegram_transport == "webhook":
+        webhook_public_path = _normalize_webhook_public_path(settings.telegram_webhook_path)
+        webhook_url = settings.telegram_webhook_url.rstrip("/") + webhook_public_path
+        run_webhook = getattr(application, "run_webhook")
+        run_webhook(
+            listen=settings.telegram_webhook_listen,
+            port=settings.telegram_webhook_port,
+            url_path=_normalize_webhook_run_path(settings.telegram_webhook_path),
+            webhook_url=webhook_url,
+            secret_token=settings.telegram_webhook_secret_token.strip() or None,
+            drop_pending_updates=False,
+        )
+        return
+    run_polling = getattr(application, "run_polling")
+    run_polling(drop_pending_updates=False)
+
+
 def main() -> int:
     try:
         settings = get_settings()
@@ -547,15 +619,20 @@ def main() -> int:
     sync_service_diagnostics(application.bot_data.get("bot_services") if isinstance(getattr(application, "bot_data", None), dict) else None)
     logger.info("Starting Telegram investment advisor bot")
 
-    if settings.health_check_enabled:
+    if _should_start_health_server(settings):
         set_health_details_provider(lambda: _build_health_details(application))
         start_health_check_server(
             host=settings.health_check_host,
             port=settings.health_check_port,
         )
+    elif settings.health_check_enabled and settings.telegram_transport == "webhook":
+        logger.info(
+            "Health check server skipped because TELEGRAM_TRANSPORT=webhook and HEALTH_CHECK_PORT matches TELEGRAM_WEBHOOK_PORT ({})",
+            settings.telegram_webhook_port,
+        )
 
     try:
-        application.run_polling(drop_pending_updates=False)
+        _run_telegram_application(application, settings)
     except KeyboardInterrupt:
         logger.info("Telegram bot stopped by user")
     except Exception as exc:

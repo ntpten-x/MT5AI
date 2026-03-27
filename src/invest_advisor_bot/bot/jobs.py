@@ -50,7 +50,8 @@ async def send_daily_digest(context: ContextTypes.DEFAULT_TYPE) -> None:
             history_limit=services.market_history_limit,
             portfolio_holdings=portfolio_holdings,
         )
-        for chunk in _chunk_text(result.recommendation_text, limit=3900):
+        rendered_text = await _append_ai_portfolio_summary(services, result.recommendation_text)
+        for chunk in _chunk_text(rendered_text, limit=3900):
             await context.bot.send_message(chat_id=services.telegram_report_chat_id, text=chunk)
         detail = {
             "report_kind": "daily_digest",
@@ -868,6 +869,41 @@ async def monitor_health_webhook(context: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
 
+async def rebalance_ai_simulated_portfolio(context: ContextTypes.DEFAULT_TYPE) -> None:
+    services = _get_services(context)
+    if services is None or not services.telegram_report_chat_id or services.ai_simulated_portfolio_service is None:
+        return
+
+    started_at = perf_counter()
+    status = "ok"
+    detail: dict[str, object] = {}
+    try:
+        prior_state = services.ai_simulated_portfolio_service.ensure_portfolio(services.telegram_report_chat_id)
+        result = await services.ai_simulated_portfolio_service.maybe_rebalance(
+            conversation_key=services.telegram_report_chat_id,
+            reason="scheduled_job",
+            force=False,
+        )
+        detail = {
+            "action_count": result.action_count,
+            "skipped_reason": result.skipped_reason,
+            "total_value": result.snapshot.get("total_value"),
+        }
+        if result.skipped_reason != "cooldown_active" and (
+            result.action_count > 0 or prior_state.last_rebalanced_at is None
+        ):
+            for chunk in _chunk_text(result.rendered_summary, limit=3900):
+                await context.bot.send_message(chat_id=services.telegram_report_chat_id, text=chunk)
+    except Exception as exc:
+        status = "error"
+        detail = {"error": str(exc)}
+        logger.exception("AI simulated portfolio rebalance failed: {}", exc)
+    finally:
+        duration_ms = int((perf_counter() - started_at) * 1000)
+        diagnostics.record_job_run(job="ai_simulated_portfolio", status=status, duration_ms=duration_ms, detail=detail)
+        log_event("job_run", job="ai_simulated_portfolio", status=status, duration_ms=duration_ms, **detail)
+
+
 def register_jobs(
     application: Application,
     *,
@@ -884,6 +920,7 @@ def register_jobs(
     earnings_alert_days_ahead: int,
     maintenance_cleanup_interval_minutes: int,
     stock_pick_evaluation_interval_minutes: int,
+    ai_simulated_portfolio_rebalance_interval_minutes: int,
     backup_interval_hours: int,
     health_alert_interval_minutes: int,
     live_stream_poll_interval_seconds: int,
@@ -974,6 +1011,12 @@ def register_jobs(
         interval=timedelta(minutes=max(60, stock_pick_evaluation_interval_minutes)),
         first=55,
         name="stock-pick-scorecard",
+    )
+    jq.run_repeating(
+        rebalance_ai_simulated_portfolio,
+        interval=timedelta(minutes=max(60, ai_simulated_portfolio_rebalance_interval_minutes)),
+        first=75,
+        name="ai-simulated-portfolio",
     )
     jq.run_repeating(
         run_backup_snapshot,
@@ -1216,7 +1259,8 @@ async def _send_periodic_report(context: ContextTypes.DEFAULT_TYPE, *, report_ki
                 else ()
             ),
         )
-        for chunk in _chunk_text(result.recommendation_text, limit=3900):
+        rendered_text = await _append_ai_portfolio_summary(services, result.recommendation_text)
+        for chunk in _chunk_text(rendered_text, limit=3900):
             await context.bot.send_message(chat_id=services.telegram_report_chat_id, text=chunk)
         _record_sent_report(services, report_kind, services.telegram_report_chat_id, result)
         detail = {
@@ -1237,6 +1281,15 @@ async def _send_periodic_report(context: ContextTypes.DEFAULT_TYPE, *, report_ki
             status=status,
             duration_ms=int((perf_counter() - started_at) * 1000),
         )
+
+
+async def _append_ai_portfolio_summary(services: BotServices, text: str) -> str:
+    ai_service = services.ai_simulated_portfolio_service
+    if ai_service is None:
+        return text
+    snapshot = await ai_service.build_snapshot(conversation_key=services.telegram_report_chat_id)
+    summary = ai_service.render_report_summary_text(snapshot)
+    return f"{text}\n\n{summary}" if summary.strip() else text
 
 
 def _record_sent_report(services: BotServices, report_kind: str, chat_id: str, result: object) -> None:

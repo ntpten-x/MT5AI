@@ -5,6 +5,7 @@ from pathlib import Path
 from telegram.ext import Application, ApplicationBuilder
 
 from invest_advisor_bot.bot.alert_state import AlertStateStore
+from invest_advisor_bot.bot.ai_simulated_portfolio_state import AISimulatedPortfolioStateStore
 from invest_advisor_bot.bot.backup_manager import BackupManager
 from invest_advisor_bot.bot.portfolio_state import PortfolioStateStore
 from invest_advisor_bot.bot.report_memory_state import ReportMemoryStore
@@ -27,6 +28,7 @@ from invest_advisor_bot.providers.news_client import NewsClient
 from invest_advisor_bot.providers.research_client import ResearchClient
 from invest_advisor_bot.providers.transcript_client import EarningsTranscriptClient
 from invest_advisor_bot.services.recommendation_service import RecommendationService
+from invest_advisor_bot.services.ai_simulated_portfolio import AISimulatedPortfolioService
 
 
 def create_application(
@@ -66,6 +68,8 @@ def create_application(
     report_memory_store: ReportMemoryStore | None = None,
     user_state_store: UserStateStore | None = None,
     portfolio_state_store: PortfolioStateStore | None = None,
+    ai_simulated_portfolio_state_store: AISimulatedPortfolioStateStore | None = None,
+    ai_simulated_portfolio_service: AISimulatedPortfolioService | None = None,
     runtime_history_store: RuntimeHistoryStore | None = None,
     logs_dir: Path | None = None,
     log_retention: str = "14 days",
@@ -82,6 +86,10 @@ def create_application(
     event_bus_consumer_poll_interval_seconds: int = 60,
     live_stream_max_events: int = 25,
     live_stream_spread_alert_bps: float = 25.0,
+    telegram_transport: str = "polling",
+    telegram_webhook_url: str = "",
+    telegram_webhook_path: str = "",
+    telegram_webhook_port: int = 0,
     jobs_enabled: bool = False,
     daily_digest_hour_utc: int = 1,
     daily_digest_minute_utc: int = 0,
@@ -94,6 +102,7 @@ def create_application(
     risk_check_interval_minutes: int = 30,
     maintenance_cleanup_interval_minutes: int = 360,
     stock_pick_evaluation_interval_minutes: int = 360,
+    ai_simulated_portfolio_rebalance_interval_minutes: int = 360,
     backup_interval_hours: int = 24,
 ) -> Application:
     """Create the Telegram application and register handlers and optional jobs."""
@@ -137,6 +146,8 @@ def create_application(
         report_memory_store=report_memory_store,
         user_state_store=user_state_store,
         portfolio_state_store=portfolio_state_store,
+        ai_simulated_portfolio_state_store=ai_simulated_portfolio_state_store,
+        ai_simulated_portfolio_service=ai_simulated_portfolio_service,
         runtime_history_store=runtime_history_store,
         backup_manager=backup_manager,
         logs_dir=logs_dir,
@@ -153,6 +164,10 @@ def create_application(
         live_stream_poll_interval_seconds=live_stream_poll_interval_seconds,
         live_stream_max_events=live_stream_max_events,
         live_stream_spread_alert_bps=live_stream_spread_alert_bps,
+        telegram_transport=telegram_transport,
+        telegram_webhook_url=telegram_webhook_url,
+        telegram_webhook_path=telegram_webhook_path,
+        telegram_webhook_port=telegram_webhook_port,
     )
 
     if jobs_enabled:
@@ -171,6 +186,7 @@ def create_application(
             earnings_alert_days_ahead=earnings_alert_days_ahead,
             maintenance_cleanup_interval_minutes=maintenance_cleanup_interval_minutes,
             stock_pick_evaluation_interval_minutes=stock_pick_evaluation_interval_minutes,
+            ai_simulated_portfolio_rebalance_interval_minutes=ai_simulated_portfolio_rebalance_interval_minutes,
             backup_interval_hours=backup_interval_hours,
             health_alert_interval_minutes=health_alert_interval_minutes,
             live_stream_poll_interval_seconds=live_stream_poll_interval_seconds,
@@ -192,6 +208,7 @@ def create_application(
             earnings_alert_days_ahead=earnings_alert_days_ahead,
             maintenance_cleanup_interval_minutes=maintenance_cleanup_interval_minutes,
             stock_pick_evaluation_interval_minutes=stock_pick_evaluation_interval_minutes,
+            ai_simulated_portfolio_rebalance_interval_minutes=ai_simulated_portfolio_rebalance_interval_minutes,
             backup_interval_hours=backup_interval_hours,
             health_alert_interval_minutes=health_alert_interval_minutes,
             live_stream_poll_interval_seconds=live_stream_poll_interval_seconds,

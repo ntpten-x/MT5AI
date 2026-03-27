@@ -14,6 +14,7 @@ from telegram.constants import ChatAction
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from invest_advisor_bot.bot.alert_state import AlertStateStore
+from invest_advisor_bot.bot.ai_simulated_portfolio_state import AISimulatedPortfolioStateStore
 from invest_advisor_bot.bot.backup_manager import BackupManager
 from invest_advisor_bot.bot.portfolio_state import PortfolioHolding, PortfolioStateStore
 from invest_advisor_bot.bot.postgres_state import PostgresStateBackend
@@ -33,6 +34,7 @@ from invest_advisor_bot.observability import log_event
 from invest_advisor_bot.runtime_diagnostics import diagnostics
 from invest_advisor_bot.analysis.portfolio_profile import normalize_profile_name
 from invest_advisor_bot.services.recommendation_service import AssetScope, FallbackVerbosity, RecommendationService
+from invest_advisor_bot.services.ai_simulated_portfolio import AISimulatedPortfolioService
 
 BOT_SERVICES_KEY: Final[str] = "bot_services"
 MAX_TELEGRAM_MESSAGE_LENGTH: Final[int] = 4000
@@ -101,6 +103,8 @@ class BotServices:
     report_memory_store: ReportMemoryStore | None = None
     user_state_store: UserStateStore | None = None
     portfolio_state_store: PortfolioStateStore | None = None
+    ai_simulated_portfolio_state_store: AISimulatedPortfolioStateStore | None = None
+    ai_simulated_portfolio_service: AISimulatedPortfolioService | None = None
     runtime_history_store: RuntimeHistoryStore | None = None
     backup_manager: BackupManager | None = None
     logs_dir: Path | None = None
@@ -117,6 +121,10 @@ class BotServices:
     live_stream_poll_interval_seconds: int = 60
     live_stream_max_events: int = 25
     live_stream_spread_alert_bps: float = 25.0
+    telegram_transport: str = "polling"
+    telegram_webhook_url: str = ""
+    telegram_webhook_path: str = ""
+    telegram_webhook_port: int = 0
 
 
 def register_handlers(application: Application) -> None:
@@ -127,6 +135,11 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("papersell", papersell_command))
     application.add_handler(CommandHandler("profile", profile_command))
     application.add_handler(CommandHandler("portfolio", portfolio_command))
+    application.add_handler(CommandHandler("ai_portfolio", ai_portfolio_command))
+    application.add_handler(CommandHandler("ai_trades", ai_trades_command))
+    application.add_handler(CommandHandler("ai_performance", ai_performance_command))
+    application.add_handler(CommandHandler("ai_rebalance", ai_rebalance_command))
+    application.add_handler(CommandHandler("ai_reset", ai_reset_command))
     application.add_handler(CommandHandler("holdadd", holdadd_command))
     application.add_handler(CommandHandler("holdremove", holdremove_command))
     application.add_handler(CommandHandler("watchlist", watchlist_command))
@@ -158,6 +171,11 @@ async def set_bot_commands(application: Application) -> None:
             BotCommand("papersell", "ส่งคำสั่ง paper sell"),
             BotCommand("profile", "ตั้งหรือดูโปรไฟล์นักลงทุน"),
             BotCommand("portfolio", "ดูพอร์ตที่บันทึกไว้"),
+            BotCommand("ai_portfolio", "ดูพอร์ตจำลองของ AI"),
+            BotCommand("ai_trades", "ดูประวัติซื้อขายของ AI"),
+            BotCommand("ai_performance", "ดูผลตอบแทนพอร์ต AI"),
+            BotCommand("ai_rebalance", "สั่งให้ AI ทบทวนพอร์ตตัวอย่าง"),
+            BotCommand("ai_reset", "รีเซ็ตพอร์ตจำลอง AI"),
             BotCommand("holdadd", "เพิ่มหรืออัปเดต holding"),
             BotCommand("holdremove", "ลบ holding ออกจากพอร์ต"),
             BotCommand("watchlist", "ดูรายการหุ้นที่ติดตาม"),
@@ -201,6 +219,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "- /papersell NVDA 1 850\n"
         "- /holdadd VOO 10 470\n"
         "- /portfolio\n"
+        "- /ai_portfolio\n"
+        "- /ai_trades\n"
+        "- /ai_performance\n"
+        "- /ai_rebalance balanced\n"
         "- /watchadd AAPL\n"
         "- /watchlist\n"
         "- /prefs sectors=Technology,Healthcare threshold=2.1\n"
@@ -222,11 +244,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         message,
         (
             "คำสั่งหลัก\n"
-            "/start เปิดเมนูหลัก\n/help ดูวิธีใช้งาน\n/broker ดู paper account และ positions\n/paperbuy ส่งคำสั่ง paper buy\n/papersell ส่งคำสั่ง paper sell\n/profile ดูหรือตั้งโปรไฟล์นักลงทุน\n/portfolio ดูพอร์ตที่บันทึกไว้\n/holdadd เพิ่มหรืออัปเดต holding\n/holdremove ลบ holding\n/watchlist ดู watchlist\n/watchadd เพิ่มหุ้นเข้ารายการติดตาม\n/watchremove ลบหุ้นออกจาก watchlist\n/prefs ดูหรือปรับ preferences\n/report_now ขอรายงานล่าสุดทันที\n/scorecard ดูผลหุ้นที่ระบบเคยแนะนำ\n/dashboard ดู burn-in และ evaluation dashboard\n/backup_now สร้าง backup ทันที\n/status ดูสถานะ runtime ของระบบ\n/analyst ถามข้อมูล analytics/runtime\n/reviewqueue ดูรายการรอ human review\n/reviewdone ปิด human review พร้อม decision/score\n/market_update สรุปตลาดและแนวทางจัดพอร์ตล่าสุด\n\n"
+            "/start เปิดเมนูหลัก\n/help ดูวิธีใช้งาน\n/broker ดู paper account และ positions\n/paperbuy ส่งคำสั่ง paper buy\n/papersell ส่งคำสั่ง paper sell\n/profile ดูหรือตั้งโปรไฟล์นักลงทุน\n/portfolio ดูพอร์ตที่บันทึกไว้\n/ai_portfolio ดูพอร์ตตัวอย่างของ AI\n/ai_trades ดูประวัติซื้อขาย AI\n/ai_performance ดูผลตอบแทนพอร์ต AI\n/ai_rebalance ให้ AI ทบทวนพอร์ตอีกครั้ง\n/ai_reset รีเซ็ตพอร์ต AI\n/holdadd เพิ่มหรืออัปเดต holding\n/holdremove ลบ holding\n/watchlist ดู watchlist\n/watchadd เพิ่มหุ้นเข้ารายการติดตาม\n/watchremove ลบหุ้นออกจาก watchlist\n/prefs ดูหรือปรับ preferences\n/report_now ขอรายงานล่าสุดทันที\n/scorecard ดูผลหุ้นที่ระบบเคยแนะนำ\n/dashboard ดู burn-in และ evaluation dashboard\n/backup_now สร้าง backup ทันที\n/status ดูสถานะ runtime ของระบบ\n/analyst ถามข้อมูล analytics/runtime\n/reviewqueue ดูรายการรอ human review\n/reviewdone ปิด human review พร้อม decision/score\n/market_update สรุปตลาดและแนวทางจัดพอร์ตล่าสุด\n\n"
             "ระบบอัตโนมัติ\n- Morning / Midday / Closing reports\n- Stock pick alerts\n- Sector rotation alerts\n- Earnings calendar alerts\n\n"
             "โปรไฟล์ที่รองรับ\n- conservative: รักษาเงินต้น\n- balanced: สมดุล\n- growth: เติบโต\n- aggressive: alias ของ growth สำหรับสายรุก\n\n"
             "ตัวอย่างคำถาม\n- วิเคราะห์ทองคำแบบรักษาเงินต้น\n- ขอพอร์ต ETF สำหรับคนรับความเสี่ยงปานกลาง\n- ช่วยสรุปหุ้นสหรัฐแบบสั้นมาก"
-            "\n- ตอนนี้ควรซื้อหุ้นอะไร 5 ตัว\n- วิเคราะห์ AAPL และ MSFT ให้หน่อย\n- /analyst recommendation fallback trends\n- /reviewdone review-abc accepted 0.82 note=clear thesis"
+            "\n- ตอนนี้ควรซื้อหุ้นอะไร 5 ตัว\n- วิเคราะห์ AAPL และ MSFT ให้หน่อย\n- /ai_rebalance balanced\n- /ai_reset 1000 conservative\n- /analyst recommendation fallback trends\n- /reviewdone review-abc accepted 0.82 note=clear thesis"
         ),
         reply_markup=_build_main_menu(),
     )
@@ -389,6 +411,151 @@ async def portfolio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         note = f" | {holding.note}" if holding.note else ""
         lines.append(f"- {holding.normalized_ticker}: qty {holding.quantity:.4f}{avg_cost}{note}")
     await _reply_text(message, "\n".join(lines))
+
+
+async def ai_portfolio_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if message is None:
+        return
+    services = _get_services(context)
+    ai_service = services.ai_simulated_portfolio_service
+    if ai_service is None:
+        await _reply_text(message, "ระบบ AI simulated portfolio ยังไม่พร้อมใช้งาน")
+        return
+    refresh = any(str(arg).strip().casefold() in {"refresh", "rebalance"} for arg in context.args)
+    rendered = await ai_service.render_portfolio_text(conversation_key=services.telegram_report_chat_id, refresh=refresh)
+    _record_interaction(
+        services,
+        conversation_key=_conversation_key(update),
+        interaction_kind="ai_portfolio",
+        question="/ai_portfolio",
+        response_text=rendered,
+        fallback_used=False,
+        model=None,
+    )
+    await _reply_text(message, rendered)
+
+
+async def ai_trades_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if message is None:
+        return
+    services = _get_services(context)
+    ai_service = services.ai_simulated_portfolio_service
+    if ai_service is None:
+        await _reply_text(message, "ระบบ AI simulated portfolio ยังไม่พร้อมใช้งาน")
+        return
+    rendered = await ai_service.render_trades_text(conversation_key=services.telegram_report_chat_id, limit=10)
+    _record_interaction(
+        services,
+        conversation_key=_conversation_key(update),
+        interaction_kind="ai_trades",
+        question="/ai_trades",
+        response_text=rendered,
+        fallback_used=False,
+        model=None,
+    )
+    await _reply_text(message, rendered)
+
+
+async def ai_performance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if message is None:
+        return
+    services = _get_services(context)
+    ai_service = services.ai_simulated_portfolio_service
+    if ai_service is None:
+        await _reply_text(message, "ระบบ AI simulated portfolio ยังไม่พร้อมใช้งาน")
+        return
+    rendered = await ai_service.render_performance_text(conversation_key=services.telegram_report_chat_id)
+    _record_interaction(
+        services,
+        conversation_key=_conversation_key(update),
+        interaction_kind="ai_performance",
+        question="/ai_performance",
+        response_text=rendered,
+        fallback_used=False,
+        model=None,
+    )
+    await _reply_text(message, rendered)
+
+
+async def ai_rebalance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if message is None:
+        return
+    services = _get_services(context)
+    if not _is_admin_chat(update, services):
+        await _reply_text(message, "คำสั่งนี้อนุญาตเฉพาะ admin/report chat")
+        return
+    ai_service = services.ai_simulated_portfolio_service
+    if ai_service is None:
+        await _reply_text(message, "ระบบ AI simulated portfolio ยังไม่พร้อมใช้งาน")
+        return
+    profile_name = None
+    if context.args:
+        profile_name = normalize_profile_name(context.args[0], default="growth")
+        ai_service.set_profile(conversation_key=services.telegram_report_chat_id, profile_name=profile_name)
+    await message.reply_text("กำลังให้ AI ทบทวนพอร์ตจำลอง ...")
+    result = await ai_service.maybe_rebalance(
+        conversation_key=services.telegram_report_chat_id,
+        reason="manual_command",
+        force=True,
+    )
+    rendered = result.rendered_summary
+    _record_interaction(
+        services,
+        conversation_key=_conversation_key(update),
+        interaction_kind="ai_rebalance",
+        question=f"/ai_rebalance {profile_name}" if profile_name else "/ai_rebalance",
+        response_text=rendered,
+        fallback_used=False,
+        model=None,
+        detail={"action_count": result.action_count, "skipped_reason": result.skipped_reason, "profile_name": profile_name},
+    )
+    await _reply_text(message, rendered)
+
+
+async def ai_reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if message is None:
+        return
+    services = _get_services(context)
+    if not _is_admin_chat(update, services):
+        await _reply_text(message, "คำสั่งนี้อนุญาตเฉพาะ admin/report chat")
+        return
+    ai_service = services.ai_simulated_portfolio_service
+    if ai_service is None:
+        await _reply_text(message, "ระบบ AI simulated portfolio ยังไม่พร้อมใช้งาน")
+        return
+    starting_cash = ai_service.starting_cash_usd
+    profile_name = None
+    args = list(context.args or [])
+    if args:
+        try:
+            starting_cash = max(100.0, float(args[0]))
+            args = args[1:]
+        except ValueError:
+            profile_name = normalize_profile_name(args[0], default="growth")
+            args = args[1:]
+    if args and profile_name is None:
+        profile_name = normalize_profile_name(args[0], default="growth")
+    await ai_service.reset_portfolio(
+        conversation_key=services.telegram_report_chat_id,
+        starting_cash=starting_cash,
+        profile_name=profile_name,
+    )
+    rendered = await ai_service.render_portfolio_text(conversation_key=services.telegram_report_chat_id, refresh=True)
+    _record_interaction(
+        services,
+        conversation_key=_conversation_key(update),
+        interaction_kind="ai_reset",
+        question=f"/ai_reset {starting_cash:.2f} {profile_name}".strip(),
+        response_text=rendered,
+        fallback_used=False,
+        model=None,
+    )
+    await _reply_text(message, rendered)
 
 
 async def holdadd_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -578,12 +745,13 @@ async def report_now_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         history_limit=services.market_history_limit,
         portfolio_holdings=_get_portfolio_holdings(update, services),
     )
+    rendered_text = await _append_ai_portfolio_summary(services, result.recommendation_text)
     _record_interaction(
         services,
         conversation_key=_conversation_key(update),
         interaction_kind="report_now",
         question=f"/report_now {report_kind}",
-        response_text=result.recommendation_text,
+        response_text=rendered_text,
         fallback_used=result.fallback_used,
         model=result.model,
         detail=_build_result_history_detail(source="report_now", result=result),
@@ -594,10 +762,10 @@ async def report_now_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             chat_id=str(update.effective_chat.id),
             fallback_used=result.fallback_used,
             model=result.model,
-            summary=result.recommendation_text[:240],
+            summary=rendered_text[:240],
             detail=_build_result_history_detail(source="manual_command", result=result),
         )
-    await _reply_text(message, result.recommendation_text)
+    await _reply_text(message, rendered_text)
 
 
 async def scorecard_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1286,6 +1454,12 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     braintrust_status = braintrust_observer.status() if braintrust_observer is not None else None
     recommendation_status_getter = getattr(services.recommendation_service, "status", None)
     recommendation_status = recommendation_status_getter() if callable(recommendation_status_getter) else {}
+    ai_portfolio_status = services.ai_simulated_portfolio_service.status(services.telegram_report_chat_id) if services.ai_simulated_portfolio_service is not None else None
+    ai_portfolio_snapshot = (
+        await services.ai_simulated_portfolio_service.build_snapshot(conversation_key=services.telegram_report_chat_id)
+        if services.ai_simulated_portfolio_service is not None
+        else None
+    )
     llm_status = recommendation_status.get("llm") if isinstance(recommendation_status, Mapping) else None
     thesis_vector_status = recommendation_status.get("thesis_vector_store") if isinstance(recommendation_status, Mapping) else None
     feature_store_status = recommendation_status.get("feature_store") if isinstance(recommendation_status, Mapping) else None
@@ -1306,6 +1480,28 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         for item in _render_llm_provider_status_lines(llm_status):
             lines.append(item)
     lines.append("Key Providers")
+    lines.append(
+        "Telegram: "
+        f"transport={services.telegram_transport or 'polling'} | "
+        f"webhook_path={services.telegram_webhook_path or '-'} | "
+        f"webhook_port={services.telegram_webhook_port or '-'}"
+    )
+    if services.telegram_transport == "webhook" and services.telegram_webhook_url:
+        lines.append(f"Telegram webhook: {services.telegram_webhook_url}{services.telegram_webhook_path}")
+    if isinstance(ai_portfolio_status, Mapping):
+        ai_profile = str(ai_portfolio_status.get("profile_name") or "-").strip() or "-"
+        ai_universe = ",".join(str(item) for item in (ai_portfolio_status.get("allowed_asset_types") or []) if str(item).strip())
+        lines.append(
+            "AI Portfolio: "
+            f"enabled={ai_portfolio_status.get('enabled')} | backend={ai_portfolio_status.get('backend') or '-'} | "
+            f"value={float((ai_portfolio_snapshot or {}).get('total_value') or 0.0):.2f} | "
+            f"cash={float((ai_portfolio_snapshot or {}).get('cash') or 0.0):.2f} | "
+            f"holdings={ai_portfolio_status.get('holding_count') or 0} | "
+            f"profile={ai_profile} | universe={ai_universe or '-'} | "
+            f"last={ai_portfolio_status.get('last_rebalanced_at') or '-'}"
+        )
+        if ai_portfolio_status.get("last_action_summary"):
+            lines.append(f"AI Portfolio action: {ai_portfolio_status.get('last_action_summary')}")
     research_status = services.research_client.status() if services.research_client is not None else None
     transcript_mode = _render_transcript_fallback_label(research_status)
     if isinstance(transcript_status, Mapping):
@@ -1715,17 +1911,18 @@ async def market_update_command(update: Update, context: ContextTypes.DEFAULT_TY
         conversation_key=_conversation_key(update),
         portfolio_holdings=_get_portfolio_holdings(update, services),
     )
+    rendered_text = await _append_ai_portfolio_summary(services, result.recommendation_text)
     _record_interaction(
         services,
         conversation_key=_conversation_key(update),
         interaction_kind="market_update",
         question="/market_update",
-        response_text=result.recommendation_text,
+        response_text=rendered_text,
         fallback_used=result.fallback_used,
         model=result.model,
         detail=_build_result_history_detail(source="market_update", result=result),
     )
-    await _reply_text(message, result.recommendation_text)
+    await _reply_text(message, rendered_text)
 
 
 async def handle_quick_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1981,6 +2178,15 @@ def _infer_report_kind_now() -> str:
     if hour < 18:
         return "midday"
     return "closing"
+
+
+async def _append_ai_portfolio_summary(services: BotServices, text: str) -> str:
+    ai_service = services.ai_simulated_portfolio_service
+    if ai_service is None:
+        return text
+    snapshot = await ai_service.build_snapshot(conversation_key=services.telegram_report_chat_id)
+    summary = ai_service.render_report_summary_text(snapshot)
+    return f"{text}\n\n{summary}" if summary.strip() else text
 
 
 def _build_result_history_detail(*, source: str, result: object) -> dict[str, Any]:

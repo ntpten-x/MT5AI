@@ -64,3 +64,39 @@ def test_main_starts_with_file_backend_when_psycopg_missing(
 
     assert main() == 0
     assert captured["database_url"] == ""
+
+
+def test_main_runs_webhook_when_transport_is_webhook(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _make_settings(tmp_path, monkeypatch)
+    settings.telegram_transport = "webhook"
+    settings.telegram_webhook_url = "https://example.onrender.com"
+    settings.telegram_webhook_path = "/telegram/webhook"
+    settings.telegram_webhook_port = 10000
+    captured: dict[str, object] = {}
+
+    class FakeApplication:
+        bot_data: dict[str, object] = {}
+
+        @staticmethod
+        def run_polling(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            raise AssertionError("run_polling should not be called in webhook mode")
+
+        @staticmethod
+        def run_webhook(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            captured["kwargs"] = kwargs
+            return None
+
+    monkeypatch.setattr("invest_advisor_bot.main.get_settings", lambda: settings)
+    monkeypatch.setattr("invest_advisor_bot.main.resolve_database_url", lambda runtime_settings: "")
+    monkeypatch.setattr("invest_advisor_bot.main.configure_logging", lambda runtime_settings: None)
+    monkeypatch.setattr("invest_advisor_bot.main.log_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr("invest_advisor_bot.main.build_application", lambda runtime_settings, database_url=None: FakeApplication())
+    monkeypatch.setattr("invest_advisor_bot.main.sync_service_diagnostics", lambda services: None)
+    monkeypatch.setattr("invest_advisor_bot.main.stop_health_check_server", lambda: None)
+
+    assert main() == 0
+    assert captured["kwargs"]["webhook_url"] == "https://example.onrender.com/telegram/webhook"
+    assert captured["kwargs"]["url_path"] == "telegram/webhook"
