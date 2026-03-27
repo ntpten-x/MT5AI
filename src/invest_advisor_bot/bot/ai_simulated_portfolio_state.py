@@ -69,6 +69,10 @@ class AISimulatedPortfolioStateStore:
         else:
             self._load()
 
+    @property
+    def backend_name(self) -> str:
+        return "postgres" if self._db is not None else "file"
+
     def ensure_portfolio(
         self,
         portfolio_key: str,
