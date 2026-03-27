@@ -152,7 +152,7 @@ class AISimulatedPortfolioService:
                 last_action_summary=state.last_action_summary,
                 metadata=metadata,
             )
-        return state
+        return self._ensure_trade_history_matches_state(conversation_key=conversation_key, state=state)
 
     def set_profile(self, *, conversation_key: str | None, profile_name: str) -> AISimulatedPortfolioState:
         state = self.ensure_portfolio(conversation_key)
@@ -495,6 +495,14 @@ class AISimulatedPortfolioService:
         return "\n".join(lines)
 
     def render_report_summary_text(self, snapshot: Mapping[str, Any]) -> str:
+        return self.render_daily_digest_text(snapshot=snapshot, report_kind=None)
+
+    def render_daily_digest_text(
+        self,
+        *,
+        snapshot: Mapping[str, Any],
+        report_kind: str | None,
+    ) -> str:
         holdings = snapshot.get("holdings")
         top_holdings: list[str] = []
         if isinstance(holdings, list):
@@ -512,6 +520,12 @@ class AISimulatedPortfolioService:
             ),
             f"ถืออยู่: {', '.join(top_holdings) if top_holdings else 'cash only'}",
         ]
+        if report_kind:
+            lines[0] = {
+                "morning": "🌅 AI Portfolio Morning Digest",
+                "midday": "☀️ AI Portfolio Midday Digest",
+                "closing": "🌙 AI Portfolio Closing Digest",
+            }.get(str(report_kind), "📘 AI Paper Portfolio")
         if contributor is not None:
             lines.append(f"เด่นสุด: {contributor.get('ticker')} {self._format_signed_currency(contributor.get('total_pnl'))}")
         if detractor is not None and str(detractor.get('ticker') or '') != str((contributor or {}).get('ticker') or ''):
@@ -520,8 +534,90 @@ class AISimulatedPortfolioService:
             lines.append(f"รอบล่าสุด: {snapshot.get('last_action_summary')}")
         return "\n".join(lines)
 
+    def render_trade_alert_texts(
+        self,
+        *,
+        snapshot: Mapping[str, Any],
+        trades: Sequence[AISimulatedPortfolioTrade],
+    ) -> tuple[str, ...]:
+        if not trades:
+            return ()
+        texts: list[str] = []
+        holdings = snapshot.get("holdings")
+        holdings_summary = []
+        if isinstance(holdings, list):
+            for item in holdings[:4]:
+                holdings_summary.append(f"{item.get('ticker')} {self._format_ratio_pct(item.get('weight_pct'), digits=0)}")
+        for trade in trades:
+            icon = {"buy": "🟢", "sell": "🔴", "hold": "🟡"}.get(str(trade.action).lower(), "🔔")
+            action_label = {"buy": "AI ซื้อ", "sell": "AI ขาย", "hold": "AI ถือ"}.get(str(trade.action).lower(), "AI ปรับพอร์ต")
+            lines = [
+                f"{icon} {action_label} | {trade.ticker}",
+                f"• มูลค่า: {self._format_currency(trade.notional)}",
+                f"• ราคาอ้างอิง: {self._format_currency(trade.price)}",
+                f"• ประเภท: {self._asset_type_label_th(trade.asset_type)}",
+            ]
+            if trade.rationale:
+                lines.append(f"• เหตุผล: {trade.rationale}")
+            if holdings_summary:
+                lines.append(f"• พอร์ตตอนนี้: {', '.join(holdings_summary)}")
+            lines.append(
+                f"• มูลค่าพอร์ตรวม: {self._format_currency(snapshot.get('total_value'))} | เงินสด {self._format_ratio_pct(snapshot.get('cash_pct'), digits=0)}"
+            )
+            texts.append("\n".join(lines))
+        return tuple(texts)
+
     def render_rebalance_text(self, result: AISimulatedPortfolioRebalanceResult) -> str:
         return result.rendered_summary
+
+    def _ensure_trade_history_matches_state(
+        self,
+        *,
+        conversation_key: str | None,
+        state: AISimulatedPortfolioState,
+    ) -> AISimulatedPortfolioState:
+        if not state.holdings:
+            return state
+        portfolio_key = self.portfolio_key(conversation_key)
+        existing_trades = self.state_store.list_trades(portfolio_key, limit=500)
+        existing_tickers = {
+            str(trade.ticker or "").strip().upper()
+            for trade in existing_trades
+            if str(trade.ticker or "").strip()
+        }
+        missing_holdings = [holding for holding in state.holdings if holding.normalized_ticker not in existing_tickers]
+        if not missing_holdings:
+            return state
+        synthetic_trades: list[dict[str, Any]] = []
+        for holding in missing_holdings:
+            occurred_at = holding.opened_at or state.last_rebalanced_at or state.created_at or datetime.now(timezone.utc)
+            price = self._coerce_float(holding.avg_cost) or 0.0
+            trade_id = hashlib.sha256(
+                f"backfill:{portfolio_key}:{holding.normalized_ticker}:{holding.quantity:.8f}:{price:.6f}:{occurred_at.isoformat()}".encode("utf-8")
+            ).hexdigest()[:24]
+            synthetic_trades.append(
+                {
+                    "trade_id": trade_id,
+                    "action": "buy",
+                    "ticker": holding.normalized_ticker,
+                    "quantity": round(float(holding.quantity), 8),
+                    "price": round(price, 6),
+                    "notional": round(float(holding.quantity) * price, 6),
+                    "occurred_at": occurred_at.isoformat(),
+                    "label": holding.label or holding.normalized_ticker,
+                    "asset_type": holding.asset_type or "asset",
+                    "rationale": holding.last_reason or "backfill จากสถานะพอร์ตปัจจุบัน",
+                    "confidence_score": None,
+                    "coverage_score": None,
+                    "detail": {
+                        "synthetic_backfill": True,
+                        "source": "current_holdings",
+                    },
+                }
+            )
+        if synthetic_trades:
+            self.state_store.append_trades(portfolio_key, synthetic_trades)
+        return state
 
     def _resolve_policy(self, state: AISimulatedPortfolioState) -> AISimulatedPolicy:
         metadata = self._normalized_metadata(state)
@@ -1198,6 +1294,8 @@ class AISimulatedPortfolioService:
             f"• {time_text} | {action_label} {trade.ticker} | {self._format_currency(trade.notional)} @ {self._format_currency(trade.price)}"
         ]
         meta_parts = [self._asset_type_label_th(trade.asset_type)]
+        if isinstance(trade.detail, Mapping) and trade.detail.get("synthetic_backfill"):
+            meta_parts.append("backfill")
         if trade.confidence_score is not None:
             meta_parts.append(f"confidence {float(trade.confidence_score):.2f}")
         if trade.coverage_score is not None:

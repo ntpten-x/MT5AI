@@ -745,7 +745,7 @@ async def report_now_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         history_limit=services.market_history_limit,
         portfolio_holdings=_get_portfolio_holdings(update, services),
     )
-    rendered_text = await _append_ai_portfolio_summary(services, result.recommendation_text)
+    rendered_text = await _append_ai_portfolio_summary(services, result.recommendation_text, report_kind=report_kind)
     _record_interaction(
         services,
         conversation_key=_conversation_key(update),
@@ -2180,12 +2180,12 @@ def _infer_report_kind_now() -> str:
     return "closing"
 
 
-async def _append_ai_portfolio_summary(services: BotServices, text: str) -> str:
+async def _append_ai_portfolio_summary(services: BotServices, text: str, *, report_kind: str | None = None) -> str:
     ai_service = services.ai_simulated_portfolio_service
     if ai_service is None:
         return text
     snapshot = await ai_service.build_snapshot(conversation_key=services.telegram_report_chat_id)
-    summary = ai_service.render_report_summary_text(snapshot)
+    summary = ai_service.render_daily_digest_text(snapshot=snapshot, report_kind=report_kind)
     return f"{text}\n\n{summary}" if summary.strip() else text
 
 

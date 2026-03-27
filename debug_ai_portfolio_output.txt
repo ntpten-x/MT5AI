@@ -1,0 +1,4 @@
+REBALANCE_ERR DuplicatePreparedStatement: prepared statement "_pg3_0" already exists
+portfolio_ok len=1084
+trades_ok len=78
+performance_ok len=467

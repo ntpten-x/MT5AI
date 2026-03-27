@@ -50,7 +50,7 @@ async def send_daily_digest(context: ContextTypes.DEFAULT_TYPE) -> None:
             history_limit=services.market_history_limit,
             portfolio_holdings=portfolio_holdings,
         )
-        rendered_text = await _append_ai_portfolio_summary(services, result.recommendation_text)
+        rendered_text = await _append_ai_portfolio_summary(services, result.recommendation_text, report_kind=report_kind)
         for chunk in _chunk_text(rendered_text, limit=3900):
             await context.bot.send_message(chat_id=services.telegram_report_chat_id, text=chunk)
         detail = {
@@ -892,6 +892,12 @@ async def rebalance_ai_simulated_portfolio(context: ContextTypes.DEFAULT_TYPE) -
         if result.skipped_reason != "cooldown_active" and (
             result.action_count > 0 or prior_state.last_rebalanced_at is None
         ):
+            alert_texts = services.ai_simulated_portfolio_service.render_trade_alert_texts(
+                snapshot=result.snapshot,
+                trades=result.trades,
+            )
+            for alert_text in alert_texts:
+                await context.bot.send_message(chat_id=services.telegram_report_chat_id, text=alert_text)
             for chunk in _chunk_text(result.rendered_summary, limit=3900):
                 await context.bot.send_message(chat_id=services.telegram_report_chat_id, text=chunk)
     except Exception as exc:
@@ -1283,12 +1289,12 @@ async def _send_periodic_report(context: ContextTypes.DEFAULT_TYPE, *, report_ki
         )
 
 
-async def _append_ai_portfolio_summary(services: BotServices, text: str) -> str:
+async def _append_ai_portfolio_summary(services: BotServices, text: str, *, report_kind: str | None = None) -> str:
     ai_service = services.ai_simulated_portfolio_service
     if ai_service is None:
         return text
     snapshot = await ai_service.build_snapshot(conversation_key=services.telegram_report_chat_id)
-    summary = ai_service.render_report_summary_text(snapshot)
+    summary = ai_service.render_daily_digest_text(snapshot=snapshot, report_kind=report_kind)
     return f"{text}\n\n{summary}" if summary.strip() else text
 
 

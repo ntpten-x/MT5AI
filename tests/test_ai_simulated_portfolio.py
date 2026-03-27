@@ -330,3 +330,81 @@ async def test_ai_simulated_portfolio_render_texts_use_thai_paper_ui(tmp_path: P
     assert "📒 สมุดรายการ AI Paper Portfolio" in trades_text
     assert "📊 ผลการดำเนินงาน AI Paper Portfolio" in performance_text
     assert "📈 Attribution" in performance_text
+
+
+@pytest.mark.asyncio
+async def test_ai_simulated_portfolio_backfills_trade_history_from_existing_holdings(tmp_path: Path) -> None:
+    store = AISimulatedPortfolioStateStore(path=tmp_path / "ai_simulated_portfolio.json")
+    state = store.ensure_portfolio("system", starting_cash=1000.0)
+    store.save_portfolio(
+        "system",
+        starting_cash=state.starting_cash,
+        cash=500.0,
+        realized_pnl=0.0,
+        holdings=[
+            {
+                "ticker": "GLD",
+                "quantity": 1.25,
+                "avg_cost": 200.0,
+                "label": "Gold ETF",
+                "asset_type": "gold",
+                "last_reason": "ถือป้องกันความเสี่ยง",
+                "opened_at": "2026-03-20T00:00:00+00:00",
+            }
+        ],
+        last_rebalanced_at=None,
+        last_action_summary="ไม่มีการซื้อขาย",
+        metadata={"profile_name": "growth", "allowed_asset_types": ["stock", "etf", "gold"]},
+    )
+    service = AISimulatedPortfolioService(
+        recommendation_service=_FakeRecommendationService({"stock_picks": [], "asset_snapshots": [], "market_confidence": {"score": 0.5}}),  # type: ignore[arg-type]
+        market_data_client=_FakeMarketDataClient({"GLD": _quote("GLD", 201.0)}),  # type: ignore[arg-type]
+        news_client=object(),  # type: ignore[arg-type]
+        research_client=None,
+        state_store=store,
+        starting_cash_usd=1000.0,
+    )
+
+    trades_text = await service.render_trades_text(conversation_key="system")
+    trades = store.list_trades("system", limit=20)
+
+    assert trades
+    assert trades[0].ticker == "GLD"
+    assert trades[0].detail and trades[0].detail.get("synthetic_backfill") is True
+    assert "GLD" in trades_text
+    assert "backfill" in trades_text
+
+
+@pytest.mark.asyncio
+async def test_ai_simulated_portfolio_renders_trade_alerts_and_daily_digest(tmp_path: Path) -> None:
+    payload = {
+        "stock_picks": [
+            {
+                "ticker": "AAPL",
+                "company_name": "Apple",
+                "stance": "buy",
+                "confidence_score": 0.84,
+                "coverage_score": 0.88,
+                "score": 8.2,
+            }
+        ],
+        "asset_snapshots": [],
+        "market_confidence": {"score": 0.72, "label": "high"},
+    }
+    service = AISimulatedPortfolioService(
+        recommendation_service=_FakeRecommendationService(payload),  # type: ignore[arg-type]
+        market_data_client=_FakeMarketDataClient({"AAPL": _quote("AAPL", 100.0)}),  # type: ignore[arg-type]
+        news_client=object(),  # type: ignore[arg-type]
+        research_client=None,
+        state_store=AISimulatedPortfolioStateStore(path=tmp_path / "ai_simulated_portfolio.json"),
+        starting_cash_usd=1000.0,
+    )
+
+    result = await service.maybe_rebalance(conversation_key="system", reason="buy", force=True)
+    alerts = service.render_trade_alert_texts(snapshot=result.snapshot, trades=result.trades)
+    digest = service.render_daily_digest_text(snapshot=result.snapshot, report_kind="closing")
+
+    assert alerts
+    assert "AI ซื้อ" in alerts[0]
+    assert "พอร์ตตอนนี้" in alerts[0]
+    assert "Closing Digest" in digest

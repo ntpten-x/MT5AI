@@ -345,7 +345,9 @@ class PostgresStateBackend:
         with self._shared_lock:
             connection = self._shared_connections.get(self.database_url)
             if connection is None or getattr(connection, "closed", False):
-                connection = psycopg.connect(self.database_url, autocommit=True)
+                # Supabase/pgbouncer poolers are prone to prepared-statement collisions across
+                # reused sessions, so keep psycopg in simple-query mode for state operations.
+                connection = psycopg.connect(self.database_url, autocommit=True, prepare_threshold=None)
                 self._shared_connections[self.database_url] = connection
             return connection
 
