@@ -140,7 +140,8 @@ async def test_ai_simulated_portfolio_rebalance_buys_candidates(tmp_path: Path) 
     assert result.snapshot["position_count"] >= 1
     assert result.snapshot["cash"] >= 100.0
     assert result.snapshot["total_value"] > 0
-    assert "AI Simulated Portfolio" in result.rendered_summary
+    assert "AI Paper Portfolio" in result.rendered_summary
+    assert "การตัดสินใจรอบล่าสุด" in result.rendered_summary
 
 
 @pytest.mark.asyncio
@@ -204,7 +205,7 @@ async def test_ai_simulated_portfolio_abstains_new_stock_entries_when_market_con
     tickers = {item["ticker"] for item in result.snapshot["holdings"]}
     assert "GLD" in tickers
     assert "AAPL" not in tickers
-    assert "posture=deep risk-off" in str(result.snapshot["last_action_summary"])
+    assert "โหมดป้องกันสูง" in str(result.snapshot["last_action_summary"])
 
 
 @pytest.mark.asyncio
@@ -290,3 +291,42 @@ async def test_ai_simulated_portfolio_tracks_attribution_and_reentry_cooldown(tm
 
     assert not any(item["ticker"] == "AAPL" for item in result.snapshot["holdings"])
     assert any(item["ticker"] == "AAPL" for item in result.snapshot["attribution"])
+
+
+@pytest.mark.asyncio
+async def test_ai_simulated_portfolio_render_texts_use_thai_paper_ui(tmp_path: Path) -> None:
+    payload = {
+        "stock_picks": [
+            {
+                "ticker": "AAPL",
+                "company_name": "Apple",
+                "stance": "buy",
+                "confidence_score": 0.84,
+                "coverage_score": 0.88,
+                "score": 8.2,
+            }
+        ],
+        "asset_snapshots": [],
+        "market_confidence": {"score": 0.72, "label": "high"},
+    }
+    service = AISimulatedPortfolioService(
+        recommendation_service=_FakeRecommendationService(payload),  # type: ignore[arg-type]
+        market_data_client=_FakeMarketDataClient({"AAPL": _quote("AAPL", 100.0)}),  # type: ignore[arg-type]
+        news_client=object(),  # type: ignore[arg-type]
+        research_client=None,
+        state_store=AISimulatedPortfolioStateStore(path=tmp_path / "ai_simulated_portfolio.json"),
+        starting_cash_usd=1000.0,
+    )
+
+    await service.maybe_rebalance(conversation_key="system", reason="buy", force=True)
+
+    portfolio_text = await service.render_portfolio_text(conversation_key="system")
+    trades_text = await service.render_trades_text(conversation_key="system")
+    performance_text = await service.render_performance_text(conversation_key="system")
+
+    assert "📘 AI Paper Portfolio" in portfolio_text
+    assert "💼 บัญชี" in portfolio_text
+    assert "📦 สินทรัพย์ที่ถือ" in portfolio_text
+    assert "📒 สมุดรายการ AI Paper Portfolio" in trades_text
+    assert "📊 ผลการดำเนินงาน AI Paper Portfolio" in performance_text
+    assert "📈 Attribution" in performance_text

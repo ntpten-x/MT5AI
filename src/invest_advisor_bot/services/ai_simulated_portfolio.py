@@ -41,6 +41,30 @@ PROFILE_POLICIES: dict[str, AISimulatedPolicy] = {
 }
 
 RISK_OFF_SAFE_TICKERS = {"GLD", "IAU", "TLT"}
+PROFILE_LABELS_TH = {
+    "conservative": "Conservative",
+    "balanced": "Balanced",
+    "growth": "Growth",
+}
+ASSET_TYPE_LABELS_TH = {
+    "stock": "หุ้น",
+    "etf": "ETF",
+    "gold": "ทองคำ",
+    "asset": "สินทรัพย์",
+}
+DECISION_REASON_LABELS_TH = {
+    "min_hold_period": "ยังไม่ครบระยะเวลาถือขั้นต่ำ",
+    "turnover_cap": "ชนเพดาน turnover ของพอร์ต",
+    "cash_or_turnover_limit": "เงินสดหรือ turnover ไม่พอ",
+    "reentry_cooldown": "อยู่ในช่วงพักก่อนเข้าซื้อกลับ",
+    "missing_quote": "ยังไม่มีราคาอ้างอิงที่ใช้ได้",
+    "rebalance": "ปรับน้ำหนักตามพอร์ตเป้าหมาย",
+}
+POSTURE_LABELS_TH = {
+    "deep risk-off": "โหมดป้องกันสูง",
+    "abstain / defensive": "โหมดระวังและเน้นป้องกัน",
+    "risk-on": "โหมดเดินเกมเชิงรุก",
+}
 
 
 @dataclass(slots=True, frozen=True)
@@ -326,44 +350,48 @@ class AISimulatedPortfolioService:
         metadata = self._normalized_metadata(state)
         if not trades:
             return (
-                "AI Simulated Portfolio Trades\n"
-                f"profile: {metadata.get('profile_name')}\n"
-                "ยังไม่มีรายการซื้อขาย"
+                "📒 สมุดรายการ AI Paper Portfolio\n"
+                f"🧭 โปรไฟล์: {self._profile_label_th(str(metadata.get('profile_name') or self.default_profile_name))}\n"
+                "• ยังไม่มีรายการซื้อขายจำลอง"
             )
         lines = [
-            "AI Simulated Portfolio Trades",
-            f"profile: {metadata.get('profile_name')} | recent={len(trades)}",
+            "📒 สมุดรายการ AI Paper Portfolio",
+            f"🧭 โปรไฟล์: {self._profile_label_th(str(metadata.get('profile_name') or self.default_profile_name))} | ล่าสุด {len(trades)} รายการ",
         ]
         for trade in trades[:limit]:
-            time_text = trade.occurred_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-            confidence_text = f" | conf {trade.confidence_score:.2f}" if trade.confidence_score is not None else ""
-            coverage_text = f" | cov {trade.coverage_score:.2f}" if trade.coverage_score is not None else ""
-            rationale_text = f" | {trade.rationale}" if trade.rationale else ""
-            lines.append(
-                f"- {time_text} | {trade.action.upper()} {trade.ticker} "
-                f"qty {trade.quantity:.4f} @ {trade.price:.2f} | ${trade.notional:.2f}{confidence_text}{coverage_text}{rationale_text}"
-            )
+            lines.append(self._render_trade_line(trade))
         return "\n".join(lines)
 
     async def render_performance_text(self, *, conversation_key: str | None) -> str:
         snapshot = await self.build_snapshot(conversation_key=conversation_key)
         lines = [
-            "AI Simulated Portfolio Performance",
-            f"profile: {snapshot.get('profile_name')} | return {float(snapshot.get('return_pct') or 0.0):+.2%}",
-            (
-                f"value ${float(snapshot.get('total_value') or 0.0):,.2f} | "
-                f"realized ${float(snapshot.get('realized_pnl') or 0.0):+,.2f} | "
-                f"unrealized ${float(snapshot.get('unrealized_pnl') or 0.0):+,.2f}"
-            ),
+            "📊 ผลการดำเนินงาน AI Paper Portfolio",
+            f"🧭 โปรไฟล์: {self._profile_label_th(str(snapshot.get('profile_name') or self.default_profile_name))}",
+            f"• มูลค่าพอร์ต: {self._format_currency(snapshot.get('total_value'))}",
+            f"• ผลตอบแทนรวม: {self._format_pct(snapshot.get('return_pct'))}",
+            f"• เงินสด: {self._format_currency(snapshot.get('cash'))} ({self._format_ratio_pct(snapshot.get('cash_pct'), digits=1)})",
+            f"• กำไรที่ปิดแล้ว: {self._format_signed_currency(snapshot.get('realized_pnl'))}",
+            f"• กำไร/ขาดทุนค้างอยู่: {self._format_signed_currency(snapshot.get('unrealized_pnl'))}",
         ]
         attribution = snapshot.get("attribution")
         if isinstance(attribution, list) and attribution:
-            lines.append("Attribution")
+            lines.append("📈 Attribution")
+            contributor = snapshot.get("top_contributor") if isinstance(snapshot.get("top_contributor"), Mapping) else None
+            detractor = snapshot.get("top_detractor") if isinstance(snapshot.get("top_detractor"), Mapping) else None
+            if contributor is not None:
+                lines.append(
+                    f"• ตัวทำกำไรเด่น: {contributor.get('ticker')} {self._format_signed_currency(contributor.get('total_pnl'))}"
+                )
+            if detractor is not None:
+                lines.append(
+                    f"• ตัวกดผลตอบแทน: {detractor.get('ticker')} {self._format_signed_currency(detractor.get('total_pnl'))}"
+                )
             for item in attribution[:5]:
                 lines.append(
-                    f"- {item.get('ticker')}: total ${float(item.get('total_pnl') or 0.0):+,.2f} | "
-                    f"unrealized ${float(item.get('unrealized_pnl') or 0.0):+,.2f} | "
-                    f"realized ${float(item.get('realized_pnl') or 0.0):+,.2f}"
+                    "• "
+                    f"{item.get('ticker')} | รวม {self._format_signed_currency(item.get('total_pnl'))} | "
+                    f"ค้างอยู่ {self._format_signed_currency(item.get('unrealized_pnl'))} | "
+                    f"ปิดแล้ว {self._format_signed_currency(item.get('realized_pnl'))}"
                 )
         return "\n".join(lines)
 
@@ -418,43 +446,51 @@ class AISimulatedPortfolioService:
     def render_snapshot_text(self, snapshot: Mapping[str, Any]) -> str:
         holdings = snapshot.get("holdings")
         attribution = snapshot.get("attribution")
-        allowed_types = ", ".join(str(item) for item in snapshot.get("allowed_asset_types") or ())
+        allowed_types = ", ".join(self._asset_type_label_th(str(item)) for item in snapshot.get("allowed_asset_types") or ())
         lines = [
-            "AI Simulated Portfolio",
-            (
-                f"profile: {snapshot.get('profile_name')} | universe: {allowed_types or '-'} | "
-                f"value ${float(snapshot.get('total_value') or 0.0):,.2f}"
-            ),
-            (
-                f"return {float(snapshot.get('return_pct') or 0.0):+.2%} | "
-                f"cash ${float(snapshot.get('cash') or 0.0):,.2f} ({float(snapshot.get('cash_pct') or 0.0):.0%}) | "
-                f"positions {int(snapshot.get('position_count') or 0)}"
-            ),
-            (
-                f"realized ${float(snapshot.get('realized_pnl') or 0.0):+,.2f} | "
-                f"unrealized ${float(snapshot.get('unrealized_pnl') or 0.0):+,.2f}"
-            ),
+            "📘 AI Paper Portfolio",
+            f"⏰ เวลาอัปเดต: {self._format_datetime(snapshot.get('last_rebalanced_at'))}",
+            f"🧭 โปรไฟล์: {self._profile_label_th(str(snapshot.get('profile_name') or self.default_profile_name))} | จักรวาล: {allowed_types or '-'}",
+            "",
+            "💼 บัญชี",
+            f"• เงินเริ่มต้น: {self._format_currency(snapshot.get('starting_cash'))}",
+            f"• มูลค่าปัจจุบัน: {self._format_currency(snapshot.get('total_value'))}",
+            f"• ผลตอบแทนรวม: {self._format_pct(snapshot.get('return_pct'))}",
+            f"• เงินสด: {self._format_currency(snapshot.get('cash'))} ({self._format_ratio_pct(snapshot.get('cash_pct'), digits=1)})",
+            f"• จำนวนสถานะ: {int(snapshot.get('position_count') or 0)}",
+            f"• กำไรที่ปิดแล้ว: {self._format_signed_currency(snapshot.get('realized_pnl'))}",
+            f"• กำไร/ขาดทุนค้างอยู่: {self._format_signed_currency(snapshot.get('unrealized_pnl'))}",
         ]
         if snapshot.get("last_action_summary"):
-            lines.append(f"last action: {snapshot.get('last_action_summary')}")
+            lines.extend(["", "🧾 สรุปรอบล่าสุด", f"• {snapshot.get('last_action_summary')}"])
         if isinstance(holdings, list) and holdings:
-            lines.append("Holdings")
+            lines.extend(["", "📦 สินทรัพย์ที่ถือ"])
             for item in holdings[:6]:
-                return_text = f" | ret {float(item.get('return_pct') or 0.0):+.2%}" if item.get("return_pct") is not None else ""
-                reason_text = f" | {item.get('last_reason')}" if item.get("last_reason") else ""
                 lines.append(
-                    f"- {item.get('ticker')}: ${float(item.get('market_value') or 0.0):,.2f} "
-                    f"({float(item.get('weight_pct') or 0.0):.0%}) | qty {float(item.get('quantity') or 0.0):.4f}{return_text}{reason_text}"
+                    "• "
+                    f"{item.get('ticker')} | {self._asset_type_label_th(str(item.get('asset_type') or 'asset'))} | "
+                    f"{float(item.get('quantity') or 0.0):.4f} หน่วย | "
+                    f"ต้นทุน {self._format_currency(item.get('avg_cost'))} | "
+                    f"ล่าสุด {self._format_currency(item.get('price'))} | "
+                    f"มูลค่า {self._format_currency(item.get('market_value'))} | "
+                    f"น้ำหนัก {self._format_ratio_pct(item.get('weight_pct'), digits=1)} | "
+                    f"{self._format_pct(item.get('return_pct'))}"
                 )
+                if item.get("last_reason"):
+                    lines.append(f"  เหตุผล: {item.get('last_reason')}")
         else:
-            lines.append("Holdings\n- cash only")
+            lines.extend(["", "📦 สินทรัพย์ที่ถือ", "• cash only"])
         if isinstance(attribution, list) and attribution:
-            lines.append("Attribution")
-            for item in attribution[:3]:
+            lines.extend(["", "📊 Attribution พอร์ต"])
+            contributor = snapshot.get("top_contributor") if isinstance(snapshot.get("top_contributor"), Mapping) else None
+            detractor = snapshot.get("top_detractor") if isinstance(snapshot.get("top_detractor"), Mapping) else None
+            if contributor is not None:
                 lines.append(
-                    f"- {item.get('ticker')}: total ${float(item.get('total_pnl') or 0.0):+,.2f} "
-                    f"| unrealized ${float(item.get('unrealized_pnl') or 0.0):+,.2f} "
-                    f"| realized ${float(item.get('realized_pnl') or 0.0):+,.2f}"
+                    f"• ตัวทำกำไรเด่น: {contributor.get('ticker')} {self._format_signed_currency(contributor.get('total_pnl'))}"
+                )
+            if detractor is not None:
+                lines.append(
+                    f"• ตัวกดผลตอบแทน: {detractor.get('ticker')} {self._format_signed_currency(detractor.get('total_pnl'))}"
                 )
         return "\n".join(lines)
 
@@ -463,23 +499,25 @@ class AISimulatedPortfolioService:
         top_holdings: list[str] = []
         if isinstance(holdings, list):
             for item in holdings[:3]:
-                top_holdings.append(f"{item.get('ticker')} {float(item.get('weight_pct') or 0.0):.0%}")
+                top_holdings.append(f"{item.get('ticker')} {self._format_ratio_pct(item.get('weight_pct'), digits=0)}")
         contributor = snapshot.get("top_contributor") if isinstance(snapshot.get("top_contributor"), Mapping) else None
         detractor = snapshot.get("top_detractor") if isinstance(snapshot.get("top_detractor"), Mapping) else None
         lines = [
-            "AI Portfolio",
+            "📘 AI Paper Portfolio",
             (
-                f"profile {snapshot.get('profile_name')} | value ${float(snapshot.get('total_value') or 0.0):,.0f} | "
-                f"return {float(snapshot.get('return_pct') or 0.0):+.1%} | cash {float(snapshot.get('cash_pct') or 0.0):.0%}"
+                f"โปรไฟล์ {self._profile_label_th(str(snapshot.get('profile_name') or self.default_profile_name))} | "
+                f"มูลค่า {self._format_currency(snapshot.get('total_value'))} | "
+                f"ผลตอบแทน {self._format_pct(snapshot.get('return_pct'), digits=1)} | "
+                f"เงินสด {self._format_ratio_pct(snapshot.get('cash_pct'), digits=0)}"
             ),
-            f"holdings: {', '.join(top_holdings) if top_holdings else 'cash only'}",
+            f"ถืออยู่: {', '.join(top_holdings) if top_holdings else 'cash only'}",
         ]
         if contributor is not None:
-            lines.append(f"best: {contributor.get('ticker')} ${float(contributor.get('total_pnl') or 0.0):+,.0f}")
+            lines.append(f"เด่นสุด: {contributor.get('ticker')} {self._format_signed_currency(contributor.get('total_pnl'))}")
         if detractor is not None and str(detractor.get('ticker') or '') != str((contributor or {}).get('ticker') or ''):
-            lines.append(f"worst: {detractor.get('ticker')} ${float(detractor.get('total_pnl') or 0.0):+,.0f}")
+            lines.append(f"อ่อนสุด: {detractor.get('ticker')} {self._format_signed_currency(detractor.get('total_pnl'))}")
         if snapshot.get("last_action_summary"):
-            lines.append(f"action: {snapshot.get('last_action_summary')}")
+            lines.append(f"รอบล่าสุด: {snapshot.get('last_action_summary')}")
         return "\n".join(lines)
 
     def render_rebalance_text(self, result: AISimulatedPortfolioRebalanceResult) -> str:
@@ -722,11 +760,11 @@ class AISimulatedPortfolioService:
                 continue
             can_force_sell = deep_risk_off and ticker not in RISK_OFF_SAFE_TICKERS
             if not can_force_sell and not self._can_sell_holding(holding=holding, policy=policy, now=now):
-                decisions.append({"action": "hold", "ticker": ticker, "reason": "min_hold_period"})
+                decisions.append({"action": "hold", "ticker": ticker, "label": holding.label or ticker, "reason": "min_hold_period"})
                 continue
             remaining_turnover = max(0.0, turnover_cap - turnover_used)
             if remaining_turnover < self.min_trade_notional_usd:
-                decisions.append({"action": "hold", "ticker": ticker, "reason": "turnover_cap"})
+                decisions.append({"action": "hold", "ticker": ticker, "label": holding.label or ticker, "reason": "turnover_cap"})
                 continue
             trade_value = min(reduce_value, remaining_turnover)
             quantity = trade_value / price
@@ -786,7 +824,18 @@ class AISimulatedPortfolioService:
                     detail={"reason": reason, "policy": policy.name},
                 )
             )
-            decisions.append({"action": "sell", "ticker": ticker, "notional": trade_value, "reason": "rebalance"})
+            decisions.append(
+                {
+                    "action": "sell",
+                    "ticker": ticker,
+                    "label": holding.label or ticker,
+                    "asset_type": holding.asset_type,
+                    "notional": trade_value,
+                    "price": price,
+                    "reason": "rebalance",
+                    "rationale": "ลดความเสี่ยงเชิงรับ" if can_force_sell else "ลดน้ำหนักให้กลับสู่พอร์ตเป้าหมาย",
+                }
+            )
             action_count += 1
 
         available_cash = max(0.0, state.cash - cash_floor_value)
@@ -797,7 +846,7 @@ class AISimulatedPortfolioService:
             quote = quotes.get(ticker)
             price = self._coerce_float(quote.price if quote is not None else None)
             if price is None or price <= 0:
-                decisions.append({"action": "skip", "ticker": ticker, "reason": "missing_quote"})
+                decisions.append({"action": "skip", "ticker": ticker, "label": candidate.get("label") or ticker, "reason": "missing_quote"})
                 continue
             existing = holdings.get(ticker)
             current_value = (existing.quantity * price) if existing is not None else 0.0
@@ -807,7 +856,7 @@ class AISimulatedPortfolioService:
             remaining_turnover = max(0.0, turnover_cap - turnover_used)
             buy_budget = min(needed_value, available_cash, remaining_turnover)
             if buy_budget < self.min_trade_notional_usd:
-                decisions.append({"action": "hold", "ticker": ticker, "reason": "cash_or_turnover_limit"})
+                decisions.append({"action": "hold", "ticker": ticker, "label": candidate.get("label") or ticker, "reason": "cash_or_turnover_limit"})
                 continue
             if self._in_reentry_cooldown(
                 ticker=ticker,
@@ -815,7 +864,7 @@ class AISimulatedPortfolioService:
                 policy=policy,
                 now=now,
             ):
-                decisions.append({"action": "hold", "ticker": ticker, "reason": "reentry_cooldown"})
+                decisions.append({"action": "hold", "ticker": ticker, "label": candidate.get("label") or ticker, "reason": "reentry_cooldown"})
                 continue
             quantity = buy_budget / price
             if not self.allow_fractional:
@@ -877,7 +926,20 @@ class AISimulatedPortfolioService:
                     detail={"reason": reason, "policy": policy.name, "market_confidence": self._market_confidence_score(payload)},
                 )
             )
-            decisions.append({"action": "buy", "ticker": ticker, "notional": actual_notional, "reason": "rebalance"})
+            decisions.append(
+                {
+                    "action": "buy",
+                    "ticker": ticker,
+                    "label": candidate.get("label") or ticker,
+                    "asset_type": candidate.get("asset_type") or "asset",
+                    "notional": actual_notional,
+                    "price": price,
+                    "reason": "rebalance",
+                    "rationale": candidate.get("reason") or "เพิ่มน้ำหนักตามพอร์ตเป้าหมาย",
+                    "confidence_score": candidate.get("confidence_score"),
+                    "coverage_score": candidate.get("coverage_score"),
+                }
+            )
             action_count += 1
 
         metadata["realized_pnl_by_ticker"] = realized_by_ticker
@@ -902,7 +964,7 @@ class AISimulatedPortfolioService:
         )
         saved_trades = self.state_store.append_trades(self.portfolio_key(conversation_key), trade_payloads) if trade_payloads else ()
         snapshot = await self.build_snapshot(conversation_key=conversation_key)
-        summary = self.render_snapshot_text(snapshot)
+        summary = self._render_rebalance_summary(snapshot=snapshot, decisions=decisions, trades=saved_trades)
         log_event(
             "ai_simulated_portfolio_rebalance",
             policy=policy.name,
@@ -1009,10 +1071,13 @@ class AISimulatedPortfolioService:
         else:
             posture = "risk-on"
         if buy_count == 0 and sell_count == 0:
-            return f"no trade | posture={posture} | market_confidence={market_confidence:.2f} | profile={policy.name}"
+            return (
+                f"ไม่มีการซื้อขาย | {self._posture_label_th(posture)} | "
+                f"market confidence {market_confidence:.2f} | โปรไฟล์ {self._profile_label_th(policy.name)}"
+            )
         return (
-            f"buys={buy_count} sells={sell_count} | posture={posture} | "
-            f"market_confidence={market_confidence:.2f} | profile={policy.name}"
+            f"ซื้อ {buy_count} | ขาย {sell_count} | {self._posture_label_th(posture)} | "
+            f"market confidence {market_confidence:.2f} | โปรไฟล์ {self._profile_label_th(policy.name)}"
         )
 
     def _lookup_candidate(self, candidates: Sequence[Mapping[str, Any]], ticker: str) -> Mapping[str, Any] | None:
@@ -1074,3 +1139,101 @@ class AISimulatedPortfolioService:
         if normalized_ticker in self.core_tickers or "etf" in normalized_label or source == "asset_snapshot":
             return "etf"
         return "stock"
+
+    def _render_rebalance_summary(
+        self,
+        *,
+        snapshot: Mapping[str, Any],
+        decisions: Sequence[Mapping[str, Any]],
+        trades: Sequence[AISimulatedPortfolioTrade],
+    ) -> str:
+        lines = [self.render_snapshot_text(snapshot)]
+        if trades:
+            lines.extend(["", "🧠 การตัดสินใจรอบล่าสุด"])
+            for trade in trades[:6]:
+                lines.append(self._render_trade_alert_line(trade))
+        elif decisions:
+            lines.extend(["", "🧠 การตัดสินใจรอบล่าสุด"])
+            for item in decisions[:6]:
+                lines.append(self._render_decision_line(item))
+        return "\n".join(lines)
+
+    def _render_trade_alert_line(self, trade: AISimulatedPortfolioTrade) -> str:
+        action_label = {"buy": "ซื้อ", "sell": "ขาย", "hold": "ถือ"}.get(str(trade.action).lower(), str(trade.action).upper())
+        line = (
+            "• "
+            f"{action_label} {trade.ticker} | {self._format_currency(trade.notional)} | "
+            f"ราคาอ้างอิง {self._format_currency(trade.price)} | {self._asset_type_label_th(trade.asset_type)}"
+        )
+        extras: list[str] = []
+        if trade.confidence_score is not None:
+            extras.append(f"confidence {float(trade.confidence_score):.2f}")
+        if trade.coverage_score is not None:
+            extras.append(f"coverage {float(trade.coverage_score):.2f}")
+        if extras:
+            line = f"{line} | {' | '.join(extras)}"
+        if trade.rationale:
+            line = f"{line}\n  เหตุผล: {trade.rationale}"
+        return line
+
+    def _render_decision_line(self, item: Mapping[str, Any]) -> str:
+        action = str(item.get("action") or "").lower()
+        ticker = str(item.get("ticker") or "-")
+        action_label = {"buy": "ซื้อ", "sell": "ขาย", "hold": "ถือ", "skip": "งดทำรายการ"}.get(action, action.upper() or "ตัดสินใจ")
+        parts = [f"• {action_label} {ticker}"]
+        if self._coerce_float(item.get("notional")):
+            parts.append(self._format_currency(item.get("notional")))
+        if self._coerce_float(item.get("price")):
+            parts.append(f"ราคาอ้างอิง {self._format_currency(item.get('price'))}")
+        detail = " | ".join(parts)
+        reason = str(item.get("rationale") or DECISION_REASON_LABELS_TH.get(str(item.get("reason") or ""), str(item.get("reason") or ""))).strip()
+        if reason:
+            detail = f"{detail}\n  เหตุผล: {reason}"
+        return detail
+
+    def _render_trade_line(self, trade: AISimulatedPortfolioTrade) -> str:
+        time_text = trade.occurred_at.astimezone(timezone.utc).strftime("%d-%m-%Y %H:%M UTC")
+        action_label = {"buy": "ซื้อ", "sell": "ขาย", "hold": "ถือ"}.get(str(trade.action).lower(), str(trade.action).upper())
+        lines = [
+            f"• {time_text} | {action_label} {trade.ticker} | {self._format_currency(trade.notional)} @ {self._format_currency(trade.price)}"
+        ]
+        meta_parts = [self._asset_type_label_th(trade.asset_type)]
+        if trade.confidence_score is not None:
+            meta_parts.append(f"confidence {float(trade.confidence_score):.2f}")
+        if trade.coverage_score is not None:
+            meta_parts.append(f"coverage {float(trade.coverage_score):.2f}")
+        lines.append(f"  รายละเอียด: {' | '.join(meta_parts)}")
+        if trade.rationale:
+            lines.append(f"  เหตุผล: {trade.rationale}")
+        return "\n".join(lines)
+
+    def _profile_label_th(self, value: str) -> str:
+        return PROFILE_LABELS_TH.get(str(value).strip().lower(), str(value).strip().title() or "-")
+
+    def _asset_type_label_th(self, value: str) -> str:
+        return ASSET_TYPE_LABELS_TH.get(str(value).strip().lower(), str(value).strip() or "-")
+
+    def _posture_label_th(self, value: str) -> str:
+        return POSTURE_LABELS_TH.get(str(value), str(value))
+
+    def _format_currency(self, value: Any) -> str:
+        amount = self._coerce_float(value)
+        return f"${float(amount or 0.0):,.2f}"
+
+    def _format_signed_currency(self, value: Any) -> str:
+        amount = self._coerce_float(value) or 0.0
+        return f"${amount:+,.2f}"
+
+    def _format_pct(self, value: Any, *, digits: int = 2) -> str:
+        amount = self._coerce_float(value) or 0.0
+        return f"{amount:+.{digits}%}" if digits > 0 else f"{amount:+.0%}"
+
+    def _format_ratio_pct(self, value: Any, *, digits: int = 2) -> str:
+        amount = self._coerce_float(value) or 0.0
+        return f"{amount:.{digits}%}" if digits > 0 else f"{amount:.0%}"
+
+    def _format_datetime(self, value: Any) -> str:
+        parsed = self._parse_datetime(value)
+        if parsed is None:
+            return "-"
+        return parsed.astimezone(timezone.utc).strftime("%d-%m-%Y %H:%M UTC")

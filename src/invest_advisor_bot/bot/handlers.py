@@ -420,7 +420,7 @@ async def ai_portfolio_command(update: Update, context: ContextTypes.DEFAULT_TYP
     services = _get_services(context)
     ai_service = services.ai_simulated_portfolio_service
     if ai_service is None:
-        await _reply_text(message, "ระบบ AI simulated portfolio ยังไม่พร้อมใช้งาน")
+        await _reply_text(message, "ระบบ AI Paper Portfolio ยังไม่พร้อมใช้งาน")
         return
     refresh = any(str(arg).strip().casefold() in {"refresh", "rebalance"} for arg in context.args)
     rendered = await ai_service.render_portfolio_text(conversation_key=services.telegram_report_chat_id, refresh=refresh)
@@ -443,7 +443,7 @@ async def ai_trades_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     services = _get_services(context)
     ai_service = services.ai_simulated_portfolio_service
     if ai_service is None:
-        await _reply_text(message, "ระบบ AI simulated portfolio ยังไม่พร้อมใช้งาน")
+        await _reply_text(message, "ระบบ AI Paper Portfolio ยังไม่พร้อมใช้งาน")
         return
     rendered = await ai_service.render_trades_text(conversation_key=services.telegram_report_chat_id, limit=10)
     _record_interaction(
@@ -465,7 +465,7 @@ async def ai_performance_command(update: Update, context: ContextTypes.DEFAULT_T
     services = _get_services(context)
     ai_service = services.ai_simulated_portfolio_service
     if ai_service is None:
-        await _reply_text(message, "ระบบ AI simulated portfolio ยังไม่พร้อมใช้งาน")
+        await _reply_text(message, "ระบบ AI Paper Portfolio ยังไม่พร้อมใช้งาน")
         return
     rendered = await ai_service.render_performance_text(conversation_key=services.telegram_report_chat_id)
     _record_interaction(
@@ -490,7 +490,7 @@ async def ai_rebalance_command(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     ai_service = services.ai_simulated_portfolio_service
     if ai_service is None:
-        await _reply_text(message, "ระบบ AI simulated portfolio ยังไม่พร้อมใช้งาน")
+        await _reply_text(message, "ระบบ AI Paper Portfolio ยังไม่พร้อมใช้งาน")
         return
     profile_name = None
     if context.args:
@@ -526,7 +526,7 @@ async def ai_reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
     ai_service = services.ai_simulated_portfolio_service
     if ai_service is None:
-        await _reply_text(message, "ระบบ AI simulated portfolio ยังไม่พร้อมใช้งาน")
+        await _reply_text(message, "ระบบ AI Paper Portfolio ยังไม่พร้อมใช้งาน")
         return
     starting_cash = ai_service.starting_cash_usd
     profile_name = None
