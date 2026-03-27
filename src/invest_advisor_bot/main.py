@@ -15,8 +15,10 @@ from invest_advisor_bot.braintrust_observer import BraintrustObserver
 from invest_advisor_bot.bot.alert_state import AlertStateStore
 from invest_advisor_bot.bot.ai_simulated_portfolio_state import AISimulatedPortfolioStateStore
 from invest_advisor_bot.bot.backup_manager import BackupManager
+from invest_advisor_bot.bot.handlers import set_bot_commands
 from invest_advisor_bot.bot.health_check import (
     set_health_details_provider,
+    set_telegram_webhook_dispatcher,
     start_health_check_server,
     stop_health_check_server,
 )
@@ -555,26 +557,48 @@ def _normalize_webhook_run_path(path: str) -> str:
 
 
 def _should_start_health_server(settings: Settings) -> bool:
-    if not settings.health_check_enabled:
-        return False
-    if settings.telegram_transport != "webhook":
-        return True
-    return settings.health_check_port != settings.telegram_webhook_port
+    return settings.health_check_enabled or settings.telegram_transport == "webhook"
+
+
+async def _run_telegram_webhook_application(application: object, settings: Settings) -> None:
+    webhook_public_path = _normalize_webhook_public_path(settings.telegram_webhook_path)
+    webhook_url = settings.telegram_webhook_url.rstrip("/") + webhook_public_path
+    initialize = getattr(application, "initialize")
+    start = getattr(application, "start")
+    stop = getattr(application, "stop")
+    shutdown = getattr(application, "shutdown")
+    bot = getattr(application, "bot")
+    await initialize()
+    set_health_details_provider(lambda: _build_health_details(application))
+    set_telegram_webhook_dispatcher(
+        application=application,
+        loop=asyncio.get_running_loop(),
+        path=webhook_public_path,
+        secret_token=settings.telegram_webhook_secret_token,
+    )
+    start_health_check_server(host=settings.telegram_webhook_listen, port=settings.telegram_webhook_port)
+    try:
+        await set_bot_commands(application)
+        await start()
+        await bot.set_webhook(
+            url=webhook_url,
+            secret_token=settings.telegram_webhook_secret_token.strip() or None,
+            drop_pending_updates=False,
+        )
+        logger.info("Telegram webhook configured at {}", webhook_url)
+        await asyncio.Event().wait()
+    finally:
+        with suppress(Exception):
+            await bot.delete_webhook(drop_pending_updates=False)
+        with suppress(Exception):
+            await stop()
+        with suppress(Exception):
+            await shutdown()
 
 
 def _run_telegram_application(application: object, settings: Settings) -> None:
     if settings.telegram_transport == "webhook":
-        webhook_public_path = _normalize_webhook_public_path(settings.telegram_webhook_path)
-        webhook_url = settings.telegram_webhook_url.rstrip("/") + webhook_public_path
-        run_webhook = getattr(application, "run_webhook")
-        run_webhook(
-            listen=settings.telegram_webhook_listen,
-            port=settings.telegram_webhook_port,
-            url_path=_normalize_webhook_run_path(settings.telegram_webhook_path),
-            webhook_url=webhook_url,
-            secret_token=settings.telegram_webhook_secret_token.strip() or None,
-            drop_pending_updates=False,
-        )
+        asyncio.run(_run_telegram_webhook_application(application, settings))
         return
     run_polling = getattr(application, "run_polling")
     run_polling(drop_pending_updates=False)
@@ -619,16 +643,11 @@ def main() -> int:
     sync_service_diagnostics(application.bot_data.get("bot_services") if isinstance(getattr(application, "bot_data", None), dict) else None)
     logger.info("Starting Telegram investment advisor bot")
 
-    if _should_start_health_server(settings):
+    if _should_start_health_server(settings) and settings.telegram_transport != "webhook":
         set_health_details_provider(lambda: _build_health_details(application))
         start_health_check_server(
             host=settings.health_check_host,
             port=settings.health_check_port,
-        )
-    elif settings.health_check_enabled and settings.telegram_transport == "webhook":
-        logger.info(
-            "Health check server skipped because TELEGRAM_TRANSPORT=webhook and HEALTH_CHECK_PORT matches TELEGRAM_WEBHOOK_PORT ({})",
-            settings.telegram_webhook_port,
         )
 
     try:

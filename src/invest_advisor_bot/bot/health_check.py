@@ -1,17 +1,23 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
+from concurrent.futures import Future
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, Callable, Mapping
 
 from loguru import logger
+from telegram import Update
 
 from invest_advisor_bot.runtime_diagnostics import render_prometheus_metrics
 
 _HEALTH_SERVER: HTTPServer | None = None
 _HEALTH_LOCK = threading.Lock()
 _HEALTH_DETAILS_PROVIDER: Callable[[], Mapping[str, Any]] | None = None
+_WEBHOOK_DISPATCHER: Callable[[dict[str, Any]], Future[Any] | None] | None = None
+_WEBHOOK_PATH: str | None = None
+_WEBHOOK_SECRET_TOKEN: str | None = None
 
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -75,6 +81,43 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         if include_body:
             self.wfile.write(encoded)
 
+    def do_POST(self) -> None:  # noqa: N802 - stdlib signature
+        webhook_path = _WEBHOOK_PATH or ""
+        dispatcher = _WEBHOOK_DISPATCHER
+        secret_token = (_WEBHOOK_SECRET_TOKEN or "").strip()
+        if not webhook_path or self.path != webhook_path or not callable(dispatcher):
+            self.send_response(404)
+            self.end_headers()
+            return
+        if secret_token:
+            received_secret = str(self.headers.get("X-Telegram-Bot-Api-Secret-Token") or "").strip()
+            if received_secret != secret_token:
+                self.send_response(403)
+                self.end_headers()
+                return
+        content_length = int(self.headers.get("Content-Length") or 0)
+        if content_length <= 0:
+            self.send_response(400)
+            self.end_headers()
+            return
+        try:
+            payload = json.loads(self.rfile.read(content_length).decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self.send_response(400)
+            self.end_headers()
+            return
+        try:
+            future = dispatcher(payload)
+            if future is not None:
+                future.result(timeout=10)
+        except Exception as exc:
+            logger.warning("Webhook dispatch failed: {}", exc)
+            self.send_response(500)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.end_headers()
+
     def log_message(self, format: str, *args: object) -> None:
         return
 
@@ -105,14 +148,43 @@ def set_health_details_provider(provider: Callable[[], Mapping[str, Any]] | None
         _HEALTH_DETAILS_PROVIDER = provider
 
 
-def stop_health_check_server() -> None:
-    global _HEALTH_SERVER, _HEALTH_DETAILS_PROVIDER
+def set_telegram_webhook_dispatcher(
+    *,
+    application: object | None,
+    loop: asyncio.AbstractEventLoop | None,
+    path: str | None,
+    secret_token: str | None = None,
+) -> None:
+    global _WEBHOOK_DISPATCHER, _WEBHOOK_PATH, _WEBHOOK_SECRET_TOKEN
+    normalized_path = "/" + str(path or "").strip().strip("/") if str(path or "").strip() else None
     with _HEALTH_LOCK:
-        if _HEALTH_SERVER is None:
+        _WEBHOOK_PATH = normalized_path
+        _WEBHOOK_SECRET_TOKEN = str(secret_token or "").strip() or None
+        if application is None or loop is None or normalized_path is None:
+            _WEBHOOK_DISPATCHER = None
             return
+
+        def _dispatch(payload: dict[str, Any]) -> Future[Any] | None:
+            bot = getattr(application, "bot", None)
+            update_queue = getattr(application, "update_queue", None)
+            if bot is None or update_queue is None:
+                return None
+            update = Update.de_json(payload, bot)
+            return asyncio.run_coroutine_threadsafe(update_queue.put(update), loop)
+
+        _WEBHOOK_DISPATCHER = _dispatch
+
+
+def stop_health_check_server() -> None:
+    global _HEALTH_SERVER, _HEALTH_DETAILS_PROVIDER, _WEBHOOK_DISPATCHER, _WEBHOOK_PATH, _WEBHOOK_SECRET_TOKEN
+    with _HEALTH_LOCK:
         try:
-            _HEALTH_SERVER.shutdown()
-            _HEALTH_SERVER.server_close()
+            if _HEALTH_SERVER is not None:
+                _HEALTH_SERVER.shutdown()
+                _HEALTH_SERVER.server_close()
         finally:
             _HEALTH_SERVER = None
             _HEALTH_DETAILS_PROVIDER = None
+            _WEBHOOK_DISPATCHER = None
+            _WEBHOOK_PATH = None
+            _WEBHOOK_SECRET_TOKEN = None

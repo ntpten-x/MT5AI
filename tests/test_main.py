@@ -84,10 +84,10 @@ def test_main_runs_webhook_when_transport_is_webhook(
         def run_polling(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
             raise AssertionError("run_polling should not be called in webhook mode")
 
-        @staticmethod
-        def run_webhook(*args, **kwargs) -> None:  # noqa: ANN002, ANN003
-            captured["kwargs"] = kwargs
-            return None
+    async def fake_run_webhook_application(application: object, runtime_settings: Settings) -> None:
+        captured["application"] = application
+        captured["webhook_url"] = runtime_settings.telegram_webhook_url
+        captured["webhook_path"] = runtime_settings.telegram_webhook_path
 
     monkeypatch.setattr("invest_advisor_bot.main.get_settings", lambda: settings)
     monkeypatch.setattr("invest_advisor_bot.main.resolve_database_url", lambda runtime_settings: "")
@@ -96,7 +96,9 @@ def test_main_runs_webhook_when_transport_is_webhook(
     monkeypatch.setattr("invest_advisor_bot.main.build_application", lambda runtime_settings, database_url=None: FakeApplication())
     monkeypatch.setattr("invest_advisor_bot.main.sync_service_diagnostics", lambda services: None)
     monkeypatch.setattr("invest_advisor_bot.main.stop_health_check_server", lambda: None)
+    monkeypatch.setattr("invest_advisor_bot.main._run_telegram_webhook_application", fake_run_webhook_application)
 
     assert main() == 0
-    assert captured["kwargs"]["webhook_url"] == "https://example.onrender.com/telegram/webhook"
-    assert captured["kwargs"]["url_path"] == "telegram/webhook"
+    assert captured["application"].__class__.__name__ == "FakeApplication"
+    assert captured["webhook_url"] == "https://example.onrender.com"
+    assert captured["webhook_path"] == "/telegram/webhook"
