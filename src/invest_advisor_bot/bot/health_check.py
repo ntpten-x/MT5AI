@@ -109,7 +109,13 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         try:
             future = dispatcher(payload)
             if future is not None:
-                future.result(timeout=10)
+                def _log_future_error(done_future: Future[Any]) -> None:
+                    try:
+                        done_future.result()
+                    except Exception as exc:  # pragma: no cover - defensive async logging
+                        logger.warning("Webhook update enqueue failed asynchronously: {}", exc)
+
+                future.add_done_callback(_log_future_error)
         except Exception as exc:
             logger.warning("Webhook dispatch failed: {}", exc)
             self.send_response(500)
