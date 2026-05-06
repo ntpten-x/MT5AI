@@ -49,6 +49,7 @@ from invest_advisor_bot.providers.news_client import NewsClient
 from invest_advisor_bot.providers.order_flow_client import OrderFlowClient
 from invest_advisor_bot.providers.ownership_client import OwnershipIntelligenceClient
 from invest_advisor_bot.providers.policy_feed_client import PolicyFeedClient
+from invest_advisor_bot.trading_safety import TradingSafetyPolicy, TradingSafetyStore
 from invest_advisor_bot.providers.research_client import ResearchClient
 from invest_advisor_bot.providers.transcript_client import EarningsTranscriptClient
 from invest_advisor_bot.runtime_diagnostics import diagnostics
@@ -227,6 +228,19 @@ def build_application(settings: Settings, *, database_url: str | None = None):
         tradier_base_url=settings.tradier_base_url,
         timeout_seconds=settings.broker_timeout_seconds,
     )
+    trading_safety_store = TradingSafetyStore(
+        path=settings.trading_safety_state_path,
+        policy=TradingSafetyPolicy(
+            enabled=settings.trading_safety_enabled,
+            kill_switch_enabled=settings.trading_safety_kill_switch,
+            manual_approval_required=settings.trading_safety_manual_approval_required,
+            max_order_notional_usd=settings.trading_safety_max_order_notional_usd,
+            max_order_qty=settings.trading_safety_max_order_qty,
+            daily_loss_limit_pct=settings.trading_safety_daily_loss_limit_pct,
+            max_drawdown_pct=settings.trading_safety_max_drawdown_pct,
+            allow_market_without_quote=settings.trading_safety_allow_market_without_quote,
+        ),
+    )
     market_data_client = MarketDataClient(
         cache_ttl_seconds=settings.market_cache_ttl_seconds,
         alpha_vantage_api_key=settings.alpha_vantage_api_key,
@@ -398,6 +412,7 @@ def build_application(settings: Settings, *, database_url: str | None = None):
             report_every_n_events=settings.braintrust_report_every_n_events,
         ),
         broker_client=broker_client,
+        trading_safety_store=trading_safety_store,
         transcript_client=transcript_client,
         microstructure_client=microstructure_client,
         ownership_client=ownership_client,

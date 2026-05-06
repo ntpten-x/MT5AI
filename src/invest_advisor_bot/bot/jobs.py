@@ -50,7 +50,7 @@ async def send_daily_digest(context: ContextTypes.DEFAULT_TYPE) -> None:
             history_limit=services.market_history_limit,
             portfolio_holdings=portfolio_holdings,
         )
-        rendered_text = await _append_ai_portfolio_summary(services, result.recommendation_text, report_kind=report_kind)
+        rendered_text = await _append_ai_portfolio_summary(services, result.recommendation_text, report_kind=None)
         for chunk in _chunk_text(rendered_text, limit=3900):
             await context.bot.send_message(chat_id=services.telegram_report_chat_id, text=chunk)
         detail = {

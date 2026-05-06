@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Sequence
@@ -41,6 +42,71 @@ PROFILE_POLICIES: dict[str, AISimulatedPolicy] = {
 }
 
 RISK_OFF_SAFE_TICKERS = {"GLD", "IAU", "TLT"}
+SIGNAL_TICKER_PROXIES = {
+    "^GSPC": "SPY",
+    "^SPX": "SPY",
+    "^IXIC": "QQQ",
+    "^NDX": "QQQ",
+    "GC=F": "GLD",
+    "MGC=F": "IAU",
+}
+NON_TRADEABLE_SIGNAL_TICKERS = set(SIGNAL_TICKER_PROXIES)
+DEFAULT_TRADEABLE_ETFS = {
+    "SPY",
+    "VOO",
+    "VTI",
+    "QQQ",
+    "GLD",
+    "IAU",
+    "TLT",
+    "XLF",
+    "XLE",
+    "XLK",
+    "XLY",
+    "XLP",
+    "XLV",
+    "XLI",
+    "XLB",
+    "XLU",
+    "XLC",
+    "XLRE",
+}
+ASSET_CLUSTER_BY_TICKER = {
+    "SPY": "us_broad_market",
+    "VOO": "us_broad_market",
+    "VTI": "us_broad_market",
+    "^GSPC": "us_broad_market",
+    "QQQ": "us_growth",
+    "^IXIC": "us_growth",
+    "^NDX": "us_growth",
+    "GLD": "gold",
+    "IAU": "gold",
+    "GC=F": "gold",
+    "MGC=F": "gold",
+    "TLT": "duration_bonds",
+    "XLF": "financials",
+    "XLE": "energy",
+    "XLK": "technology",
+    "XLY": "consumer_discretionary",
+    "XLP": "consumer_staples",
+    "XLV": "healthcare",
+    "XLI": "industrials",
+    "XLB": "materials",
+    "XLU": "utilities",
+    "XLC": "communication_services",
+    "XLRE": "real_estate",
+}
+CLUSTER_MAX_PCT = {
+    "us_broad_market": 0.28,
+    "us_growth": 0.25,
+    "gold": 0.30,
+    "duration_bonds": 0.25,
+    "individual_stock": 0.18,
+    "default": 0.22,
+}
+MIN_REBALANCE_BAND_PCT = 0.025
+MAX_QUOTE_STALENESS_DAYS = 7
+TRADEABLE_STOCK_PATTERN = re.compile(r"^[A-Z][A-Z0-9.-]{0,9}$")
 PROFILE_LABELS_TH = {
     "conservative": "Conservative",
     "balanced": "Balanced",
@@ -101,6 +167,7 @@ class AISimulatedPortfolioService:
         allow_fractional: bool = True,
         profile_name: str = "growth",
         allowed_asset_types: Sequence[str] = ("stock", "etf", "gold"),
+        approved_tradeable_tickers: Sequence[str] = (),
     ) -> None:
         self.recommendation_service = recommendation_service
         self.market_data_client = market_data_client
@@ -115,6 +182,8 @@ class AISimulatedPortfolioService:
         self.min_trade_notional_usd = max(5.0, float(min_trade_notional_usd))
         self.rebalance_interval_minutes = max(30, int(rebalance_interval_minutes))
         self.core_tickers = tuple(dict.fromkeys(item.strip().upper() for item in core_tickers if item.strip()))
+        approved = {item.strip().upper() for item in approved_tradeable_tickers if item and item.strip()}
+        self.approved_tradeable_tickers = frozenset(approved | DEFAULT_TRADEABLE_ETFS | set(self.core_tickers))
         self.allow_fractional = allow_fractional
         self.default_profile_name = self._normalize_profile_name(profile_name)
         normalized_asset_types = tuple(
@@ -316,7 +385,7 @@ class AISimulatedPortfolioService:
         total_pnl = state.realized_pnl + unrealized_pnl
         return_pct = (total_pnl / state.starting_cash) if state.starting_cash > 0 else 0.0
         cash_pct = (state.cash / total_value) if total_value > 0 else 1.0
-        return {
+        snapshot = {
             "portfolio_key": state.portfolio_key,
             "profile_name": str(metadata.get("profile_name") or self.default_profile_name),
             "allowed_asset_types": tuple(str(item).lower() for item in metadata.get("allowed_asset_types") or self.allowed_asset_types),
@@ -336,6 +405,9 @@ class AISimulatedPortfolioService:
             "top_contributor": attribution[0] if attribution else None,
             "top_detractor": min(attribution, key=lambda item: float(item.get("total_pnl") or 0.0)) if attribution else None,
         }
+        snapshot["performance_metrics"] = self._build_performance_metrics(state=state, metadata=metadata, snapshot=snapshot)
+        snapshot["guardrail_violations"] = self._validate_snapshot_guardrails(snapshot)
+        return snapshot
 
     async def render_portfolio_text(self, *, conversation_key: str | None, refresh: bool = False) -> str:
         if refresh:
@@ -373,6 +445,22 @@ class AISimulatedPortfolioService:
             f"• กำไรที่ปิดแล้ว: {self._format_signed_currency(snapshot.get('realized_pnl'))}",
             f"• กำไร/ขาดทุนค้างอยู่: {self._format_signed_currency(snapshot.get('unrealized_pnl'))}",
         ]
+        metrics = snapshot.get("performance_metrics")
+        if isinstance(metrics, Mapping):
+            lines.extend(
+                [
+                    "Risk / Execution Metrics",
+                    f"- Trades: {int(metrics.get('trade_count') or 0)} | buys {int(metrics.get('buy_count') or 0)} | sells {int(metrics.get('sell_count') or 0)}",
+                    f"- Turnover: {self._format_ratio_pct(metrics.get('turnover_pct'), digits=1)}",
+                    f"- Win rate (closed symbols): {self._format_ratio_pct(metrics.get('win_rate'), digits=1)}",
+                    f"- Max drawdown: {self._format_ratio_pct(metrics.get('max_drawdown_pct'), digits=1)}",
+                ]
+            )
+        violations = snapshot.get("guardrail_violations")
+        if isinstance(violations, (list, tuple)) and violations:
+            lines.append("Guardrails")
+            for item in violations[:5]:
+                lines.append(f"- {item}")
         attribution = snapshot.get("attribution")
         if isinstance(attribution, list) and attribution:
             lines.append("📈 Attribution")
@@ -663,8 +751,9 @@ class AISimulatedPortfolioService:
             for item in stock_picks:
                 if not isinstance(item, Mapping):
                     continue
-                ticker = str(item.get("ticker") or "").strip().upper()
-                if not ticker:
+                raw_ticker = str(item.get("ticker") or "").strip().upper()
+                ticker = self._tradeable_ticker(raw_ticker)
+                if not ticker or not self._is_tradeable_ticker(ticker=ticker, asset_type="stock"):
                     continue
                 confidence = self._coerce_float(item.get("confidence_score")) or 0.0
                 coverage = self._coerce_float(item.get("coverage_score")) or 0.0
@@ -682,6 +771,9 @@ class AISimulatedPortfolioService:
                 stance = str(item.get("stance") or "").strip().lower()
                 if stance and stance not in {"buy", "accumulate", "add", "hold", "overweight"}:
                     continue
+                reason = f"top pick confidence {confidence:.2f}, coverage {coverage:.2f}"
+                if raw_ticker and raw_ticker != ticker:
+                    reason = f"{reason} | signal {raw_ticker} mapped to {ticker}"
                 selected[ticker] = {
                     "ticker": ticker,
                     "label": str(item.get("company_name") or item.get("label") or ticker),
@@ -690,19 +782,23 @@ class AISimulatedPortfolioService:
                     "coverage_score": coverage,
                     "score": self._coerce_float(item.get("score")) or (confidence * 10.0),
                     "source": "stock_picks",
-                    "reason": f"top pick confidence {confidence:.2f}, coverage {coverage:.2f}",
+                    "reason": reason,
+                    "signal_ticker": raw_ticker if raw_ticker != ticker else None,
                 }
         asset_snapshots = payload.get("asset_snapshots")
         if isinstance(asset_snapshots, list):
             for item in asset_snapshots:
                 if not isinstance(item, Mapping):
                     continue
-                ticker = str(item.get("ticker") or "").strip().upper()
+                raw_ticker = str(item.get("ticker") or "").strip().upper()
+                ticker = self._tradeable_ticker(raw_ticker)
                 if not ticker:
                     continue
                 label = str(item.get("label") or item.get("company_name") or ticker)
                 asset_type = self._infer_asset_type(ticker=ticker, label=label, source="asset_snapshot")
                 if asset_type not in allowed_asset_types:
+                    continue
+                if not self._is_tradeable_ticker(ticker=ticker, asset_type=asset_type):
                     continue
                 if ticker not in self.core_tickers and asset_type == "etf" and not abstain_mode:
                     continue
@@ -715,6 +811,11 @@ class AISimulatedPortfolioService:
                 trend_score = self._coerce_float(item.get("trend_score")) or 0.0
                 if trend and trend in {"downtrend", "weak"} and ticker not in RISK_OFF_SAFE_TICKERS:
                     continue
+                if trend in {"sideways", "flat", "mixed", "neutral", ""} and ticker not in RISK_OFF_SAFE_TICKERS:
+                    continue
+                reason = f"{label} trend {trend or 'mixed'} | coverage {coverage:.2f}"
+                if raw_ticker and raw_ticker != ticker:
+                    reason = f"{reason} | signal {raw_ticker} mapped to {ticker}"
                 selected.setdefault(
                     ticker,
                     {
@@ -725,7 +826,8 @@ class AISimulatedPortfolioService:
                         "coverage_score": coverage,
                         "score": trend_score or coverage * 10.0,
                         "source": "asset_snapshots",
-                        "reason": f"{label} trend {trend or 'mixed'} | coverage {coverage:.2f}",
+                        "reason": reason,
+                        "signal_ticker": raw_ticker if raw_ticker != ticker else None,
                     },
                 )
         ranked = sorted(
@@ -737,7 +839,65 @@ class AISimulatedPortfolioService:
             ),
             reverse=True,
         )
-        return ranked[: max(policy.max_positions * 2, 6)]
+        return self._dedupe_candidates_by_cluster(ranked)[: max(policy.max_positions * 2, 6)]
+
+    def _tradeable_ticker(self, ticker: str) -> str:
+        normalized = str(ticker or "").strip().upper()
+        return SIGNAL_TICKER_PROXIES.get(normalized, normalized)
+
+    def _is_tradeable_ticker(self, *, ticker: str, asset_type: str) -> bool:
+        normalized = str(ticker or "").strip().upper()
+        normalized_type = str(asset_type or "").strip().lower()
+        if not normalized or normalized in NON_TRADEABLE_SIGNAL_TICKERS:
+            return False
+        if normalized_type in {"etf", "gold"}:
+            return normalized in self.approved_tradeable_tickers
+        if normalized_type == "stock":
+            return bool(TRADEABLE_STOCK_PATTERN.match(normalized))
+        return False
+
+    def _asset_cluster(self, ticker: str, asset_type: str | None = None) -> str:
+        normalized = str(ticker or "").strip().upper()
+        if normalized in ASSET_CLUSTER_BY_TICKER:
+            return ASSET_CLUSTER_BY_TICKER[normalized]
+        if str(asset_type or "").strip().lower() == "stock":
+            return "individual_stock"
+        return "default"
+
+    def _dedupe_candidates_by_cluster(self, candidates: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        best_by_cluster: dict[str, dict[str, Any]] = {}
+        for item in candidates:
+            ticker = str(item.get("ticker") or "").strip().upper()
+            if not ticker:
+                continue
+            cluster = self._asset_cluster(ticker, str(item.get("asset_type") or ""))
+            candidate = dict(item)
+            candidate["cluster"] = cluster
+            previous = best_by_cluster.get(cluster)
+            if previous is None:
+                best_by_cluster[cluster] = candidate
+                continue
+            previous_score = (
+                float(previous.get("score") or 0.0),
+                float(previous.get("confidence_score") or 0.0),
+                float(previous.get("coverage_score") or 0.0),
+            )
+            current_score = (
+                float(candidate.get("score") or 0.0),
+                float(candidate.get("confidence_score") or 0.0),
+                float(candidate.get("coverage_score") or 0.0),
+            )
+            if current_score > previous_score:
+                best_by_cluster[cluster] = candidate
+        return sorted(
+            best_by_cluster.values(),
+            key=lambda item: (
+                float(item.get("score") or 0.0),
+                float(item.get("confidence_score") or 0.0),
+                float(item.get("coverage_score") or 0.0),
+            ),
+            reverse=True,
+        )
 
     def _build_target_weights(
         self,
@@ -770,11 +930,28 @@ class AISimulatedPortfolioService:
             raw_scores.append((str(item.get("ticker") or "").upper(), raw))
         total_raw = sum(score for _, score in raw_scores) or 1.0
         weights = {ticker: min(policy.max_position_pct, investable_pct * (score / total_raw)) for ticker, score in raw_scores}
+        weights = self._cap_cluster_weights(weights)
         allocated = sum(weights.values())
         if allocated > investable_pct and allocated > 0:
             scale = investable_pct / allocated
             weights = {ticker: value * scale for ticker, value in weights.items()}
         return {ticker: round(value, 6) for ticker, value in weights.items() if value > 0}
+
+    def _cap_cluster_weights(self, weights: Mapping[str, float]) -> dict[str, float]:
+        capped = {str(ticker).upper(): max(0.0, float(weight or 0.0)) for ticker, weight in weights.items()}
+        cluster_totals: dict[str, float] = {}
+        for ticker, weight in capped.items():
+            cluster = self._asset_cluster(ticker)
+            cluster_totals[cluster] = cluster_totals.get(cluster, 0.0) + weight
+        for cluster, total in cluster_totals.items():
+            limit = CLUSTER_MAX_PCT.get(cluster, CLUSTER_MAX_PCT["default"])
+            if total <= limit or total <= 0:
+                continue
+            scale = limit / total
+            for ticker in list(capped):
+                if self._asset_cluster(ticker) == cluster:
+                    capped[ticker] *= scale
+        return capped
 
     def _compute_valuation(
         self,
@@ -800,6 +977,138 @@ class AISimulatedPortfolioService:
             "total_value": total_value,
             "unrealized_pnl": unrealized_pnl,
         }
+
+    def _rebalance_band_value(self, total_value: float) -> float:
+        return max(self.min_trade_notional_usd, max(0.0, total_value) * MIN_REBALANCE_BAND_PCT)
+
+    def _quote_is_fresh(self, quote: AssetQuote | None, *, now: datetime) -> bool:
+        if quote is None:
+            return False
+        timestamp = quote.timestamp
+        if timestamp is None:
+            return True
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        else:
+            timestamp = timestamp.astimezone(timezone.utc)
+        return now - timestamp <= timedelta(days=MAX_QUOTE_STALENESS_DAYS)
+
+    def _cluster_value(
+        self,
+        *,
+        holdings: Mapping[str, AISimulatedPortfolioHolding],
+        quotes: Mapping[str, AssetQuote | None],
+        cluster: str,
+    ) -> float:
+        value = 0.0
+        for ticker, holding in holdings.items():
+            if self._asset_cluster(ticker, holding.asset_type) != cluster:
+                continue
+            quote = quotes.get(ticker)
+            price = self._coerce_float(quote.price if quote is not None else None) or self._coerce_float(holding.avg_cost) or 0.0
+            value += holding.quantity * price
+        return value
+
+    def _validate_snapshot_guardrails(self, snapshot: Mapping[str, Any]) -> tuple[str, ...]:
+        violations: list[str] = []
+        total_value = self._coerce_float(snapshot.get("total_value")) or 0.0
+        holdings = snapshot.get("holdings")
+        if not isinstance(holdings, list):
+            return ()
+        cluster_weights: dict[str, float] = {}
+        for item in holdings:
+            if not isinstance(item, Mapping):
+                continue
+            ticker = str(item.get("ticker") or "").strip().upper()
+            asset_type = str(item.get("asset_type") or "").strip().lower()
+            if not self._is_tradeable_ticker(ticker=ticker, asset_type=asset_type):
+                violations.append(f"non_tradeable_holding:{ticker}")
+            cluster = self._asset_cluster(ticker, asset_type)
+            weight = self._coerce_float(item.get("weight_pct")) or 0.0
+            cluster_weights[cluster] = cluster_weights.get(cluster, 0.0) + weight
+        for cluster, weight in cluster_weights.items():
+            limit = CLUSTER_MAX_PCT.get(cluster, CLUSTER_MAX_PCT["default"])
+            if weight > limit + 0.02:
+                violations.append(f"cluster_cap:{cluster}:{weight:.1%}>{limit:.1%}")
+        cash_pct = self._coerce_float(snapshot.get("cash_pct"))
+        if total_value > 0 and cash_pct is not None and cash_pct < 0:
+            violations.append("negative_cash_weight")
+        return tuple(violations)
+
+    def _build_performance_metrics(
+        self,
+        *,
+        state: AISimulatedPortfolioState,
+        metadata: Mapping[str, Any],
+        snapshot: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        trades = self.state_store.list_trades(state.portfolio_key, limit=1000)
+        total_notional = sum(abs(float(trade.notional or 0.0)) for trade in trades)
+        sells = [trade for trade in trades if str(trade.action).lower() == "sell"]
+        buys = [trade for trade in trades if str(trade.action).lower() == "buy"]
+        realized_map = {
+            str(key).upper(): float(value or 0.0)
+            for key, value in dict(metadata.get("realized_pnl_by_ticker") or {}).items()
+        }
+        closed = [value for value in realized_map.values() if abs(value) >= 0.005]
+        win_rate = (sum(1 for value in closed if value > 0) / len(closed)) if closed else None
+        equity_curve = self._normalized_equity_curve(metadata.get("equity_curve"))
+        current_value = self._coerce_float(snapshot.get("total_value"))
+        if current_value is not None and current_value > 0:
+            last_at = str(snapshot.get("last_rebalanced_at") or "")
+            if not equity_curve or abs(float(equity_curve[-1].get("total_value") or 0.0) - current_value) > 0.005:
+                equity_curve = [*equity_curve, {"at": last_at, "total_value": current_value}]
+        max_drawdown = self._compute_max_drawdown(equity_curve)
+        return {
+            "trade_count": len(trades),
+            "buy_count": len(buys),
+            "sell_count": len(sells),
+            "turnover_pct": (total_notional / state.starting_cash) if state.starting_cash > 0 else None,
+            "win_rate": win_rate,
+            "closed_symbol_count": len(closed),
+            "max_drawdown_pct": max_drawdown,
+            "equity_points": len(equity_curve),
+            "benchmark": "SPY",
+            "benchmark_note": "benchmark alpha requires historical equity snapshots and market history",
+        }
+
+    def _normalized_equity_curve(self, value: Any) -> list[dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+        points: list[dict[str, Any]] = []
+        for item in value:
+            if not isinstance(item, Mapping):
+                continue
+            total_value = self._coerce_float(item.get("total_value"))
+            if total_value is None or total_value <= 0:
+                continue
+            points.append({"at": str(item.get("at") or ""), "total_value": float(total_value)})
+        return points[-500:]
+
+    def _compute_max_drawdown(self, equity_curve: Sequence[Mapping[str, Any]]) -> float | None:
+        peak: float | None = None
+        max_drawdown = 0.0
+        for point in equity_curve:
+            value = self._coerce_float(point.get("total_value"))
+            if value is None or value <= 0:
+                continue
+            peak = value if peak is None else max(peak, value)
+            if peak and peak > 0:
+                max_drawdown = min(max_drawdown, (value - peak) / peak)
+        return max_drawdown if peak is not None else None
+
+    def _append_equity_point(
+        self,
+        *,
+        metadata: dict[str, Any],
+        at: datetime,
+        total_value: float,
+    ) -> None:
+        curve = self._normalized_equity_curve(metadata.get("equity_curve"))
+        if curve and abs(float(curve[-1].get("total_value") or 0.0) - total_value) < 0.005:
+            return
+        curve.append({"at": at.isoformat(), "total_value": round(float(total_value), 6)})
+        metadata["equity_curve"] = curve[-500:]
 
     async def _execute_rebalance(
         self,
@@ -835,6 +1144,7 @@ class AISimulatedPortfolioService:
 
         turnover_cap = total_value * (1.0 if deep_risk_off else policy.max_turnover_pct)
         turnover_used = 0.0
+        rebalance_band_value = self._rebalance_band_value(total_value)
 
         def sell_priority(item: AISimulatedPortfolioHolding) -> tuple[int, float]:
             target_value = float(target_value_by_ticker.get(item.normalized_ticker) or 0.0)
@@ -846,13 +1156,16 @@ class AISimulatedPortfolioService:
         for holding in sorted(holdings.values(), key=sell_priority):
             ticker = holding.normalized_ticker
             quote = quotes.get(ticker)
+            if not self._quote_is_fresh(quote, now=now):
+                decisions.append({"action": "hold", "ticker": ticker, "label": holding.label or ticker, "reason": "stale_quote"})
+                continue
             price = self._coerce_float(quote.price if quote is not None else None) or self._coerce_float(holding.avg_cost)
             if price is None or price <= 0:
                 continue
             current_value = holding.quantity * price
             target_value = float(target_value_by_ticker.get(ticker) or 0.0)
             reduce_value = max(0.0, current_value - target_value)
-            if reduce_value < self.min_trade_notional_usd:
+            if reduce_value < rebalance_band_value:
                 continue
             can_force_sell = deep_risk_off and ticker not in RISK_OFF_SAFE_TICKERS
             if not can_force_sell and not self._can_sell_holding(holding=holding, policy=policy, now=now):
@@ -940,19 +1253,31 @@ class AISimulatedPortfolioService:
             if candidate is None:
                 continue
             quote = quotes.get(ticker)
+            if not self._quote_is_fresh(quote, now=now):
+                decisions.append({"action": "skip", "ticker": ticker, "label": candidate.get("label") or ticker, "reason": "stale_quote"})
+                continue
             price = self._coerce_float(quote.price if quote is not None else None)
             if price is None or price <= 0:
                 decisions.append({"action": "skip", "ticker": ticker, "label": candidate.get("label") or ticker, "reason": "missing_quote"})
                 continue
+            asset_type = str(candidate.get("asset_type") or "asset")
+            if not self._is_tradeable_ticker(ticker=ticker, asset_type=asset_type):
+                decisions.append({"action": "skip", "ticker": ticker, "label": candidate.get("label") or ticker, "reason": "non_tradeable_ticker"})
+                continue
             existing = holdings.get(ticker)
             current_value = (existing.quantity * price) if existing is not None else 0.0
             needed_value = max(0.0, target_value - current_value)
-            if needed_value < self.min_trade_notional_usd:
+            if needed_value < rebalance_band_value:
                 continue
             remaining_turnover = max(0.0, turnover_cap - turnover_used)
-            buy_budget = min(needed_value, available_cash, remaining_turnover)
+            cluster = self._asset_cluster(ticker, asset_type)
+            cluster_limit_value = total_value * CLUSTER_MAX_PCT.get(cluster, CLUSTER_MAX_PCT["default"])
+            cluster_current_value = self._cluster_value(holdings=holdings, quotes=quotes, cluster=cluster)
+            cluster_budget = max(0.0, cluster_limit_value - cluster_current_value)
+            buy_budget = min(needed_value, available_cash, remaining_turnover, cluster_budget)
             if buy_budget < self.min_trade_notional_usd:
-                decisions.append({"action": "hold", "ticker": ticker, "label": candidate.get("label") or ticker, "reason": "cash_or_turnover_limit"})
+                reason_label = "cluster_exposure_cap" if cluster_budget < self.min_trade_notional_usd else "cash_or_turnover_limit"
+                decisions.append({"action": "hold", "ticker": ticker, "label": candidate.get("label") or ticker, "reason": reason_label})
                 continue
             if self._in_reentry_cooldown(
                 ticker=ticker,
@@ -1041,6 +1366,8 @@ class AISimulatedPortfolioService:
         metadata["realized_pnl_by_ticker"] = realized_by_ticker
         metadata["last_exit_at_by_ticker"] = last_exit_at_by_ticker
         metadata["labels_by_ticker"] = labels_by_ticker
+        post_trade_valuation = self._compute_valuation(state=state, quotes=quotes)
+        self._append_equity_point(metadata=metadata, at=now, total_value=float(post_trade_valuation.get("total_value") or total_value))
         action_summary = self._build_action_summary(
             decisions=decisions,
             abstain_mode=abstain_mode,

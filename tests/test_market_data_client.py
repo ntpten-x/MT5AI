@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pandas as pd
@@ -695,6 +695,7 @@ def test_market_data_client_etf_exposure_profile_parses_holdings(monkeypatch: py
 
 
 def test_market_data_client_global_macro_calendar_parses_trading_economics(monkeypatch: pytest.MonkeyPatch) -> None:
+    event_at = datetime.now(timezone.utc) + timedelta(days=7)
     client = MarketDataClient(
         cache_ttl_seconds=900,
         trading_economics_api_key="demo",
@@ -709,7 +710,7 @@ def test_market_data_client_global_macro_calendar_parses_trading_economics(monke
                 "Country": "Japan",
                 "Event": "Interest Rate Decision",
                 "Category": "Interest Rate",
-                "Date": "2026-04-03T03:00:00Z",
+                "Date": event_at.isoformat().replace("+00:00", "Z"),
                 "Importance": 3,
                 "Forecast": "0.50",
                 "Previous": "0.25",

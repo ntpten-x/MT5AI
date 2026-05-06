@@ -128,6 +128,7 @@ Recommended settings:
 - optionally provide `GDELT_QUERY` to enrich macro intelligence with global event / geopolitical context
 - optionally provide `BROKER_SANDBOX_ENABLED=true` with `ALPACA_API_KEY` and `ALPACA_API_SECRET` for paper-trading execution sandbox
 - optionally set `BROKER_PROVIDER=tradier` with `TRADIER_ACCESS_TOKEN` and `TRADIER_ACCOUNT_ID` for Tradier execution / options routing
+- keep `TRADING_SAFETY_ENABLED=true`; use `TRADING_SAFETY_MANUAL_APPROVAL_REQUIRED=true` when every paper order should wait for `/safetyapprove`
 - optionally set `BRAINTRUST_ENABLED=true` with `BRAINTRUST_API_KEY` if you want production LLM quality logs uploaded to Braintrust
 - optionally set `LANGFUSE_ENABLED=true` with `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` for Langfuse tracing plus local JSONL fallback
 - optionally set `HUMAN_REVIEW_ENABLED=true` to queue fallback / low-confidence recommendations for manual review via `/reviewqueue` and `/reviewdone`
@@ -282,6 +283,15 @@ BROKER_PROVIDER=alpaca
 TRADIER_ACCESS_TOKEN=
 TRADIER_ACCOUNT_ID=
 TRADIER_BASE_URL=https://sandbox.tradier.com
+TRADING_SAFETY_ENABLED=true
+TRADING_SAFETY_STATE_PATH=data/trading_safety.json
+TRADING_SAFETY_KILL_SWITCH=false
+TRADING_SAFETY_MANUAL_APPROVAL_REQUIRED=false
+TRADING_SAFETY_MAX_ORDER_NOTIONAL_USD=5000
+TRADING_SAFETY_MAX_ORDER_QTY=1000
+TRADING_SAFETY_DAILY_LOSS_LIMIT_PCT=0.03
+TRADING_SAFETY_MAX_DRAWDOWN_PCT=0.10
+TRADING_SAFETY_ALLOW_MARKET_WITHOUT_QUOTE=false
 BRAINTRUST_ENABLED=false
 BRAINTRUST_API_KEY=
 BRAINTRUST_API_URL=https://api.braintrust.dev
@@ -361,6 +371,7 @@ EARNINGS_ALERT_DAYS_AHEAD=7
 - `Backtesting` is optional. When enabled, the stock screener includes recent candidate-vs-benchmark backtest context and persists local backtest summaries.
 - `Alpaca` broker paper trading stays disabled unless `BROKER_SANDBOX_ENABLED=true` and valid paper credentials are configured. `/broker`, `/paperbuy`, and `/papersell` are intended for sandbox use only.
 - `Tradier` can be used instead of Alpaca by setting `BROKER_PROVIDER=tradier`. The bot will use Tradier account balances/positions/orders and can submit option orders through the execution client.
+- `Trading Safety` wraps broker sandbox orders with max-notional, max-quantity, cash, daily-loss, drawdown, quote, audit-log, manual-approval, and kill-switch checks. Use `/safety` to inspect state, `/killswitch on|off` to block or resume new orders, and `/safetyapprove APPROVAL_ID` when manual approval is enabled.
 - `Braintrust` is optional. If the SDK or API key is unavailable, the observer still keeps local JSONL datasets for recommendation/outcome quality events and marks remote sync as unavailable.
 - `Prefect` is optional. If the dependency is missing or `PREFECT_ENABLED=false`, the workflow catalog still reports status but orchestration wrappers fall back to direct function calls.
 - `DATA_QUALITY_GX_ENABLED=true` requires `great-expectations`. If the dependency is missing, the built-in guard still runs and the GX portion of the report is marked unavailable.

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
@@ -1072,6 +1072,8 @@ async def test_macro_event_refresh_job_sends_deduped_alerts_and_records_audits()
 
 @pytest.mark.asyncio
 async def test_macro_event_refresh_job_skips_expired_alerts() -> None:
+    now = datetime.now(timezone.utc)
+
     class ExpiringRecommendationService(FakeRecommendationService):
         async def generate_macro_event_driven_alerts(self, **kwargs):  # noqa: ANN003
             return [
@@ -1079,13 +1081,13 @@ async def test_macro_event_refresh_job_skips_expired_alerts() -> None:
                     key="macro_event_refresh:expired",
                     severity="warning",
                     text="expired alert",
-                    metadata={"expires_at": "2026-03-22T00:00:00+00:00"},
+                    metadata={"expires_at": (now - timedelta(hours=1)).isoformat()},
                 ),
                 SimpleNamespace(
                     key="macro_event_refresh:active",
                     severity="warning",
                     text="active alert",
-                    metadata={"expires_at": "2026-03-25T00:00:00+00:00"},
+                    metadata={"expires_at": (now + timedelta(hours=1)).isoformat()},
                 ),
             ]
 
@@ -1103,7 +1105,7 @@ async def test_macro_event_refresh_job_skips_expired_alerts() -> None:
 
     assert len(bot.sent_messages) == 1
     assert "active alert" in bot.sent_messages[0][1]
-    assert history_store.alert_audits[0]["detail"]["expires_at"] == "2026-03-25T00:00:00+00:00"
+    assert history_store.alert_audits[0]["detail"]["expires_at"] > now.isoformat()
 
 
 @pytest.mark.asyncio

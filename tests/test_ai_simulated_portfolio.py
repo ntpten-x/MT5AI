@@ -408,3 +408,60 @@ async def test_ai_simulated_portfolio_renders_trade_alerts_and_daily_digest(tmp_
     assert "AI ซื้อ" in alerts[0]
     assert "พอร์ตตอนนี้" in alerts[0]
     assert "Closing Digest" in digest
+
+
+@pytest.mark.asyncio
+async def test_ai_simulated_portfolio_maps_signals_to_tradeable_proxies(tmp_path: Path) -> None:
+    payload = {
+        "stock_picks": [],
+        "asset_snapshots": [
+            {"ticker": "^GSPC", "label": "S&P 500 index", "trend": "uptrend", "trend_score": 4.4, "coverage_score": 0.90},
+            {"ticker": "^IXIC", "label": "Nasdaq index", "trend": "uptrend", "trend_score": 4.2, "coverage_score": 0.90},
+            {"ticker": "GC=F", "label": "Gold futures", "trend": "uptrend", "trend_score": 3.8, "coverage_score": 0.90},
+        ],
+        "market_confidence": {"score": 0.76, "label": "high"},
+    }
+    service = AISimulatedPortfolioService(
+        recommendation_service=_FakeRecommendationService(payload),  # type: ignore[arg-type]
+        market_data_client=_FakeMarketDataClient({"SPY": _quote("SPY", 100.0), "QQQ": _quote("QQQ", 200.0), "GLD": _quote("GLD", 50.0)}),  # type: ignore[arg-type]
+        news_client=object(),  # type: ignore[arg-type]
+        research_client=None,
+        state_store=AISimulatedPortfolioStateStore(path=tmp_path / "ai_simulated_portfolio.json"),
+        starting_cash_usd=1000.0,
+    )
+
+    result = await service.maybe_rebalance(conversation_key="system", reason="proxy", force=True)
+
+    tickers = {item["ticker"] for item in result.snapshot["holdings"]}
+    assert {"SPY", "QQQ", "GLD"} & tickers
+    assert "^GSPC" not in tickers
+    assert "^IXIC" not in tickers
+    assert "GC=F" not in tickers
+    assert not result.snapshot["guardrail_violations"]
+
+
+@pytest.mark.asyncio
+async def test_ai_simulated_portfolio_skips_sideways_non_safe_assets(tmp_path: Path) -> None:
+    payload = {
+        "stock_picks": [],
+        "asset_snapshots": [
+            {"ticker": "XLC", "label": "Communication ETF", "trend": "sideways", "trend_score": 1.0, "coverage_score": 0.98},
+            {"ticker": "GLD", "label": "Gold ETF", "trend": "sideways", "trend_score": 1.0, "coverage_score": 0.98},
+        ],
+        "market_confidence": {"score": 0.42, "label": "low"},
+    }
+    service = AISimulatedPortfolioService(
+        recommendation_service=_FakeRecommendationService(payload),  # type: ignore[arg-type]
+        market_data_client=_FakeMarketDataClient({"XLC": _quote("XLC", 100.0), "GLD": _quote("GLD", 50.0)}),  # type: ignore[arg-type]
+        news_client=object(),  # type: ignore[arg-type]
+        research_client=None,
+        state_store=AISimulatedPortfolioStateStore(path=tmp_path / "ai_simulated_portfolio.json"),
+        starting_cash_usd=1000.0,
+    )
+
+    result = await service.maybe_rebalance(conversation_key="system", reason="sideways", force=True)
+
+    tickers = {item["ticker"] for item in result.snapshot["holdings"]}
+    assert "XLC" not in tickers
+    assert "GLD" in tickers
+    assert all(trade.ticker != "XLC" for trade in result.trades)

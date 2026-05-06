@@ -458,9 +458,11 @@ class RecommendationService:
         dbt_semantic_status = self.dbt_semantic_layer.status() if self.dbt_semantic_layer is not None else None
         langfuse_status = self.langfuse_observer.status() if self.langfuse_observer is not None else None
         human_review_status = self.human_review_store.status() if self.human_review_store is not None else None
+        llm_status_getter = getattr(self.llm_client, "status", None)
+        llm_status = llm_status_getter() if callable(llm_status_getter) else {"available": True}
         return {
             "available": True,
-            "llm": self.llm_client.status(),
+            "llm": dict(llm_status) if isinstance(llm_status, Mapping) else {"available": True},
             "system_prompt_path": str(self.system_prompt_path),
             "system_prompt_exists": self.system_prompt_path.exists(),
             "chat_history_limit": self.chat_history_limit,

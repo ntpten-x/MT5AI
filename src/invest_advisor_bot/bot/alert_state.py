@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock
@@ -52,12 +54,13 @@ class AlertStateStore:
         with self._lock:
             self._prune(now)
             for alert in normalized:
-                key = str(getattr(alert, "key", "") or "").strip()
+                keys = self._alert_identity_keys(alert)
                 cadence = self._resolve_alert_cadence(alert)
-                last_seen = self._state.get(key)
+                last_seen = self._last_seen_for_any(keys)
                 if last_seen is not None and now - last_seen < cadence:
                     continue
-                self._state[key] = now
+                for key in keys:
+                    self._state[key] = now
                 accepted.append(alert)
             if accepted:
                 self._persist()
@@ -111,11 +114,13 @@ class AlertStateStore:
         if not normalized:
             return []
         assert self._db is not None
+        identities_by_alert = {id(alert): self._alert_identity_keys(alert) for alert in normalized}
+        lookup_keys = sorted({key for keys in identities_by_alert.values() for key in keys})
         cutoff = now - self._retention_window()
         self._db.execute("DELETE FROM bot_alert_state WHERE last_seen < %s", (cutoff,))
         rows = self._db.fetch_all(
             "SELECT alert_key, last_seen FROM bot_alert_state WHERE alert_key = ANY(%s)",
-            ([str(getattr(alert, "key", "") or "").strip() for alert in normalized],),
+            (lookup_keys,),
         )
         seen_map = {
             str(key): value
@@ -125,13 +130,16 @@ class AlertStateStore:
         accepted: list[object] = []
         upserts: list[tuple[object, ...]] = []
         for alert in normalized:
-            key = str(getattr(alert, "key", "") or "").strip()
+            keys = identities_by_alert.get(id(alert)) or self._alert_identity_keys(alert)
             cadence = self._resolve_alert_cadence(alert)
-            last_seen = seen_map.get(key)
+            last_seen_values = [seen_map[key] for key in keys if key in seen_map]
+            last_seen = max(last_seen_values) if last_seen_values else None
             if last_seen is not None and now - last_seen < cadence:
                 continue
             accepted.append(alert)
-            upserts.append((key, now))
+            upserts.extend((key, now) for key in keys)
+            for key in keys:
+                seen_map[key] = now
         if upserts:
             self._db.executemany(
                 """
@@ -143,6 +151,46 @@ class AlertStateStore:
                 upserts,
             )
         return accepted
+
+    def _alert_identity_keys(self, alert: object) -> tuple[str, ...]:
+        raw_key = str(getattr(alert, "key", "") or "").strip()
+        identities = [raw_key]
+        text = str(getattr(alert, "text", "") or "").strip()
+        normalized_text = self._normalize_alert_text(text)
+        if normalized_text:
+            identities.append(f"text:{self._digest(normalized_text)}")
+        metadata = getattr(alert, "metadata", None)
+        if isinstance(metadata, dict):
+            alert_kind = str(metadata.get("alert_kind") or raw_key.split(":", 1)[0] or "alert").strip()
+            semantic_parts = [
+                alert_kind,
+                metadata.get("ticker"),
+                metadata.get("indicator"),
+                metadata.get("event_key"),
+                metadata.get("event_name"),
+                metadata.get("actual"),
+                metadata.get("baseline"),
+                metadata.get("surprise"),
+                metadata.get("severity"),
+            ]
+            semantic = "|".join(str(item).strip().lower() for item in semantic_parts if item not in (None, ""))
+            if semantic:
+                identities.append(f"semantic:{self._digest(semantic)}")
+        return tuple(dict.fromkeys(identity for identity in identities if identity))
+
+    def _last_seen_for_any(self, keys: Iterable[str]) -> datetime | None:
+        matches = [self._state[key] for key in keys if key in self._state]
+        return max(matches) if matches else None
+
+    @staticmethod
+    def _digest(value: str) -> str:
+        return hashlib.sha256(value.encode("utf-8")).hexdigest()[:24]
+
+    @staticmethod
+    def _normalize_alert_text(text: str) -> str:
+        normalized = re.sub(r"\s+", " ", text.strip().lower())
+        normalized = re.sub(r"\b\d{4}-\d{2}-\d{2}t\d{2}:\d{2}(?::\d{2})?(?:\+\d{2}:\d{2}|z)?\b", "<timestamp>", normalized)
+        return normalized
 
     def _resolve_alert_cadence(self, alert: object) -> timedelta:
         metadata = getattr(alert, "metadata", None)

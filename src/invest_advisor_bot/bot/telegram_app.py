@@ -29,6 +29,7 @@ from invest_advisor_bot.providers.research_client import ResearchClient
 from invest_advisor_bot.providers.transcript_client import EarningsTranscriptClient
 from invest_advisor_bot.services.recommendation_service import RecommendationService
 from invest_advisor_bot.services.ai_simulated_portfolio import AISimulatedPortfolioService
+from invest_advisor_bot.trading_safety import TradingSafetyStore
 
 
 def create_application(
@@ -39,6 +40,7 @@ def create_application(
     news_client: NewsClient,
     research_client: ResearchClient | None = None,
     broker_client: ExecutionSandboxClient | None = None,
+    trading_safety_store: TradingSafetyStore | None = None,
     transcript_client: EarningsTranscriptClient | None = None,
     microstructure_client: MicrostructureClient | None = None,
     live_market_stream_client: LiveMarketStreamClient | None = None,
@@ -118,6 +120,7 @@ def create_application(
         news_client=news_client,
         research_client=research_client,
         broker_client=broker_client,
+        trading_safety_store=trading_safety_store,
         transcript_client=transcript_client,
         microstructure_client=microstructure_client,
         live_market_stream_client=live_market_stream_client,

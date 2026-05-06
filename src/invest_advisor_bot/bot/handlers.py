@@ -30,6 +30,7 @@ from invest_advisor_bot.providers.microstructure_client import MicrostructureCli
 from invest_advisor_bot.providers.news_client import NewsClient
 from invest_advisor_bot.providers.research_client import ResearchClient
 from invest_advisor_bot.providers.transcript_client import EarningsTranscriptClient
+from invest_advisor_bot.trading_safety import TradingSafetyStore
 from invest_advisor_bot.observability import log_event
 from invest_advisor_bot.runtime_diagnostics import diagnostics
 from invest_advisor_bot.analysis.portfolio_profile import normalize_profile_name
@@ -79,6 +80,7 @@ class BotServices:
     market_history_interval: str
     market_history_limit: int
     broker_client: ExecutionSandboxClient | None = None
+    trading_safety_store: TradingSafetyStore | None = None
     transcript_client: EarningsTranscriptClient | None = None
     microstructure_client: MicrostructureClient | None = None
     live_market_stream_client: LiveMarketStreamClient | None = None
@@ -133,6 +135,9 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("broker", broker_command))
     application.add_handler(CommandHandler("paperbuy", paperbuy_command))
     application.add_handler(CommandHandler("papersell", papersell_command))
+    application.add_handler(CommandHandler("safety", safety_command))
+    application.add_handler(CommandHandler("safetyapprove", safetyapprove_command))
+    application.add_handler(CommandHandler("killswitch", killswitch_command))
     application.add_handler(CommandHandler("profile", profile_command))
     application.add_handler(CommandHandler("portfolio", portfolio_command))
     application.add_handler(CommandHandler("ai_portfolio", ai_portfolio_command))
@@ -169,6 +174,9 @@ async def set_bot_commands(application: Application) -> None:
             BotCommand("broker", "ดู paper account และ positions"),
             BotCommand("paperbuy", "ส่งคำสั่ง paper buy"),
             BotCommand("papersell", "ส่งคำสั่ง paper sell"),
+            BotCommand("safety", "ดู execution safety และ pending orders"),
+            BotCommand("safetyapprove", "อนุมัติ pending paper order"),
+            BotCommand("killswitch", "เปิด/ปิด trading kill switch"),
             BotCommand("profile", "ตั้งหรือดูโปรไฟล์นักลงทุน"),
             BotCommand("portfolio", "ดูพอร์ตที่บันทึกไว้"),
             BotCommand("ai_portfolio", "ดูพอร์ตจำลองของ AI"),
@@ -244,7 +252,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         message,
         (
             "คำสั่งหลัก\n"
-            "/start เปิดเมนูหลัก\n/help ดูวิธีใช้งาน\n/broker ดู paper account และ positions\n/paperbuy ส่งคำสั่ง paper buy\n/papersell ส่งคำสั่ง paper sell\n/profile ดูหรือตั้งโปรไฟล์นักลงทุน\n/portfolio ดูพอร์ตที่บันทึกไว้\n/ai_portfolio ดูพอร์ตตัวอย่างของ AI\n/ai_trades ดูประวัติซื้อขาย AI\n/ai_performance ดูผลตอบแทนพอร์ต AI\n/ai_rebalance ให้ AI ทบทวนพอร์ตอีกครั้ง\n/ai_reset รีเซ็ตพอร์ต AI\n/holdadd เพิ่มหรืออัปเดต holding\n/holdremove ลบ holding\n/watchlist ดู watchlist\n/watchadd เพิ่มหุ้นเข้ารายการติดตาม\n/watchremove ลบหุ้นออกจาก watchlist\n/prefs ดูหรือปรับ preferences\n/report_now ขอรายงานล่าสุดทันที\n/scorecard ดูผลหุ้นที่ระบบเคยแนะนำ\n/dashboard ดู burn-in และ evaluation dashboard\n/backup_now สร้าง backup ทันที\n/status ดูสถานะ runtime ของระบบ\n/analyst ถามข้อมูล analytics/runtime\n/reviewqueue ดูรายการรอ human review\n/reviewdone ปิด human review พร้อม decision/score\n/market_update สรุปตลาดและแนวทางจัดพอร์ตล่าสุด\n\n"
+            "/start เปิดเมนูหลัก\n/help ดูวิธีใช้งาน\n/broker ดู paper account และ positions\n/paperbuy ส่งคำสั่ง paper buy\n/papersell ส่งคำสั่ง paper sell\n/safety ดู execution safety และ pending orders\n/safetyapprove อนุมัติ pending paper order\n/killswitch เปิด/ปิด trading kill switch\n/profile ดูหรือตั้งโปรไฟล์นักลงทุน\n/portfolio ดูพอร์ตที่บันทึกไว้\n/ai_portfolio ดูพอร์ตตัวอย่างของ AI\n/ai_trades ดูประวัติซื้อขาย AI\n/ai_performance ดูผลตอบแทนพอร์ต AI\n/ai_rebalance ให้ AI ทบทวนพอร์ตอีกครั้ง\n/ai_reset รีเซ็ตพอร์ต AI\n/holdadd เพิ่มหรืออัปเดต holding\n/holdremove ลบ holding\n/watchlist ดู watchlist\n/watchadd เพิ่มหุ้นเข้ารายการติดตาม\n/watchremove ลบหุ้นออกจาก watchlist\n/prefs ดูหรือปรับ preferences\n/report_now ขอรายงานล่าสุดทันที\n/scorecard ดูผลหุ้นที่ระบบเคยแนะนำ\n/dashboard ดู burn-in และ evaluation dashboard\n/backup_now สร้าง backup ทันที\n/status ดูสถานะ runtime ของระบบ\n/analyst ถามข้อมูล analytics/runtime\n/reviewqueue ดูรายการรอ human review\n/reviewdone ปิด human review พร้อม decision/score\n/market_update สรุปตลาดและแนวทางจัดพอร์ตล่าสุด\n\n"
             "ระบบอัตโนมัติ\n- Morning / Midday / Closing reports\n- Stock pick alerts\n- Sector rotation alerts\n- Earnings calendar alerts\n\n"
             "โปรไฟล์ที่รองรับ\n- conservative: รักษาเงินต้น\n- balanced: สมดุล\n- growth: เติบโต\n- aggressive: alias ของ growth สำหรับสายรุก\n\n"
             "ตัวอย่างคำถาม\n- วิเคราะห์ทองคำแบบรักษาเงินต้น\n- ขอพอร์ต ETF สำหรับคนรับความเสี่ยงปานกลาง\n- ช่วยสรุปหุ้นสหรัฐแบบสั้นมาก"
@@ -331,6 +339,32 @@ async def _handle_paper_trade(
         return
     symbol, qty, limit_price = parsed
     order_type = "limit" if limit_price is not None else "market"
+    safety_decision = await _evaluate_trade_safety(
+        services=services,
+        symbol=symbol,
+        side=side,
+        qty=qty,
+        order_type=order_type,
+        limit_price=limit_price,
+        source=f"paper_{side}",
+        actor=_conversation_key(update) or "",
+        approved=False,
+    )
+    if safety_decision is not None and safety_decision.approval_required:
+        await _reply_text(
+            message,
+            (
+                "คำสั่งถูกพักรออนุมัติ\n"
+                f"approval_id: {safety_decision.order_id}\n"
+                f"symbol: {symbol} | side: {side} | qty: {qty}\n"
+                f"estimated_notional: {safety_decision.estimated_notional if safety_decision.estimated_notional is not None else '-'}\n"
+                f"อนุมัติด้วย /safetyapprove {safety_decision.order_id}"
+            ),
+        )
+        return
+    if safety_decision is not None and not safety_decision.allowed:
+        await _reply_text(message, f"paper {side} ถูก block โดย safety layer: {safety_decision.reason}\n{safety_decision.message}")
+        return
     result = await broker_client.submit_order(
         symbol=symbol,
         qty=qty,
@@ -341,6 +375,17 @@ async def _handle_paper_trade(
     if result is None:
         await _reply_text(message, f"paper {side} ไม่สำเร็จ: {broker_client.status().get('warning') or 'unknown error'}")
         return
+    if services.trading_safety_store is not None:
+        services.trading_safety_store.record_execution(
+            symbol=result.symbol,
+            side=result.side,
+            qty=result.qty,
+            broker_order_id=result.order_id,
+            status=result.status,
+            estimated_notional=safety_decision.estimated_notional if safety_decision is not None else None,
+            source=f"paper_{side}",
+            actor=_conversation_key(update) or "",
+        )
     rendered = (
         f"paper {side} submitted\n"
         f"symbol: {result.symbol}\n"
@@ -360,6 +405,140 @@ async def _handle_paper_trade(
         model=None,
     )
     await _reply_text(message, rendered)
+
+
+async def safety_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if message is None:
+        return
+    services = _get_services(context)
+    if not _is_admin_chat(update, services):
+        await _reply_text(message, "คำสั่งนี้อนุญาตเฉพาะ admin/report chat")
+        return
+    store = services.trading_safety_store
+    if store is None:
+        await _reply_text(message, "Trading safety layer ยังไม่พร้อมใช้งาน")
+        return
+    status = store.status()
+    lines = [
+        "Trading Safety",
+        f"enabled={status.get('enabled')} | kill_switch={status.get('kill_switch_enabled')} | manual_approval={status.get('manual_approval_required')}",
+        f"max_order_notional={status.get('max_order_notional_usd')} | max_qty={status.get('max_order_qty')}",
+        f"daily_loss_limit={float(status.get('daily_loss_limit_pct') or 0.0):.1%} | max_drawdown={float(status.get('max_drawdown_pct') or 0.0):.1%}",
+        f"day_start_equity={status.get('day_start_equity') or '-'} | peak_equity={status.get('peak_equity') or '-'}",
+        f"pending_orders={status.get('pending_order_count')}",
+    ]
+    pending = store.list_pending_orders(limit=5)
+    if pending:
+        lines.append("Pending")
+        for item in pending:
+            lines.append(
+                f"- {item.get('order_id')}: {item.get('side')} {item.get('symbol')} qty={item.get('qty')} "
+                f"type={item.get('order_type')} notional={item.get('estimated_notional') or '-'}"
+            )
+    last_audit = status.get("last_audit")
+    if isinstance(last_audit, Mapping):
+        lines.append(f"last_event={last_audit.get('event')} | reason={last_audit.get('reason') or '-'} | at={last_audit.get('at') or '-'}")
+    await _reply_text(message, "\n".join(lines))
+
+
+async def killswitch_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if message is None:
+        return
+    services = _get_services(context)
+    if not _is_admin_chat(update, services):
+        await _reply_text(message, "คำสั่งนี้อนุญาตเฉพาะ admin/report chat")
+        return
+    store = services.trading_safety_store
+    if store is None:
+        await _reply_text(message, "Trading safety layer ยังไม่พร้อมใช้งาน")
+        return
+    raw = str(context.args[0] if context.args else "status").strip().casefold()
+    if raw in {"on", "enable", "enabled", "1", "true"}:
+        store.set_kill_switch(True, reason="manual_command", actor=_conversation_key(update) or "")
+        await _reply_text(message, "Trading kill switch เปิดแล้ว: order ใหม่จะถูก block")
+        return
+    if raw in {"off", "disable", "disabled", "0", "false"}:
+        store.set_kill_switch(False, reason="manual_command", actor=_conversation_key(update) or "")
+        await _reply_text(message, "Trading kill switch ปิดแล้ว")
+        return
+    status = store.status()
+    await _reply_text(message, f"Trading kill switch: {status.get('kill_switch_enabled')}\nใช้ /killswitch on หรือ /killswitch off")
+
+
+async def safetyapprove_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.effective_message
+    if message is None:
+        return
+    services = _get_services(context)
+    if not _is_admin_chat(update, services):
+        await _reply_text(message, "คำสั่งนี้อนุญาตเฉพาะ admin/report chat")
+        return
+    store = services.trading_safety_store
+    broker_client = services.broker_client
+    if store is None or broker_client is None or not broker_client.enabled():
+        await _reply_text(message, "Trading safety หรือ broker sandbox ยังไม่พร้อมใช้งาน")
+        return
+    if not context.args:
+        await _reply_text(message, "ใช้รูปแบบ /safetyapprove APPROVAL_ID")
+        return
+    approval_id = str(context.args[0]).strip()
+    pending = store.get_pending_order(approval_id)
+    if not pending or pending.get("status") != "pending":
+        await _reply_text(message, f"ไม่พบ pending order: {approval_id}")
+        return
+    symbol = str(pending.get("symbol") or "").strip().upper()
+    side = str(pending.get("side") or "").strip().lower()
+    qty = float(pending.get("qty") or 0.0)
+    order_type = str(pending.get("order_type") or "market").strip().lower()
+    limit_price = pending.get("limit_price")
+    limit_price_float = float(limit_price) if limit_price is not None else None
+    decision = await _evaluate_trade_safety(
+        services=services,
+        symbol=symbol,
+        side=side,
+        qty=qty,
+        order_type=order_type,
+        limit_price=limit_price_float,
+        source=str(pending.get("source") or "paper_approval"),
+        actor=_conversation_key(update) or "",
+        approved=True,
+        existing_order_id=approval_id,
+    )
+    if decision is not None and not decision.allowed:
+        store.mark_order_status(approval_id, status="rejected", reason=decision.reason, actor=_conversation_key(update) or "")
+        await _reply_text(message, f"approval {approval_id} ถูก reject โดย safety layer: {decision.reason}\n{decision.message}")
+        return
+    result = await broker_client.submit_order(
+        symbol=symbol,
+        qty=qty,
+        side=side,
+        order_type=order_type,
+        limit_price=limit_price_float,
+    )
+    if result is None:
+        store.mark_order_status(approval_id, status="failed", reason=broker_client.status().get("warning") or "unknown error", actor=_conversation_key(update) or "")
+        await _reply_text(message, f"submit ไม่สำเร็จ: {broker_client.status().get('warning') or 'unknown error'}")
+        return
+    store.mark_order_status(approval_id, status="submitted", broker_order_id=result.order_id, actor=_conversation_key(update) or "")
+    store.record_execution(
+        symbol=result.symbol,
+        side=result.side,
+        qty=result.qty,
+        broker_order_id=result.order_id,
+        status=result.status,
+        estimated_notional=decision.estimated_notional if decision is not None else None,
+        source="safety_approval",
+        actor=_conversation_key(update) or "",
+    )
+    await _reply_text(
+        message,
+        (
+            f"approved and submitted: {approval_id}\n"
+            f"symbol: {result.symbol}\nqty: {result.qty}\nstatus: {result.status or '-'}\norder_id: {result.order_id or '-'}"
+        ),
+    )
 
 
 async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -876,6 +1055,7 @@ async def dashboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     live_latest = live_snapshot.get("latest_provider_success") or {}
     live_response = live_snapshot.get("response_stats") or {}
     broker_status = services.broker_client.status() if services.broker_client is not None else None
+    safety_status = services.trading_safety_store.status() if services.trading_safety_store is not None else None
     transcript_status = services.transcript_client.status() if services.transcript_client is not None else None
     microstructure_status = services.microstructure_client.status() if services.microstructure_client is not None else None
     live_stream_status = services.live_market_stream_client.status() if services.live_market_stream_client is not None else None
@@ -1393,11 +1573,18 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     alerts_today = snapshot.get("alerts_today") or {}
     db_state = snapshot.get("db_state") or {}
     circuit = snapshot.get("provider_circuit") or {}
-    market_data_status = services.market_data_client.status()
+    market_data_status_getter = getattr(services.market_data_client, "status", None)
+    market_data_status = market_data_status_getter() if callable(market_data_status_getter) else {}
+    if not isinstance(market_data_status, Mapping):
+        market_data_status = {}
 
     lines = [
         "Runtime Status",
-        f"DB: {_render_health_label(bool(db_state.get('healthy'))) if db_state.get('healthy') is not None else 'unknown'} | backend={db_state.get('backend')} | checked_at={db_state.get('checked_at') or '-'}",
+        (
+            f"DB: {db_state.get('backend')} | healthy={db_state.get('healthy')}"
+            f" | status={_render_health_label(bool(db_state.get('healthy'))) if db_state.get('healthy') is not None else 'unknown'}"
+            f" | checked_at={db_state.get('checked_at') or '-'}"
+        ),
         (
             "MLflow: "
             f"enabled={mlflow_status.get('enabled')} | tracking={mlflow_status.get('tracking_configured')} | "
@@ -1446,6 +1633,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"- {provider_name}: open={state.get('is_open')} | failures={state.get('failure_count')} | until={state.get('open_until') or '-'}"
             )
     broker_status = services.broker_client.status() if services.broker_client is not None else None
+    safety_status = services.trading_safety_store.status() if services.trading_safety_store is not None else None
     transcript_status = services.transcript_client.status() if services.transcript_client is not None else None
     microstructure_status = services.microstructure_client.status() if services.microstructure_client is not None else None
     live_stream_status = services.live_market_stream_client.status() if services.live_market_stream_client is not None else None
@@ -1544,6 +1732,12 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         if broker_status.get("warning"):
             lines.append(f"Broker warning: {broker_status.get('warning')}")
+    if isinstance(safety_status, Mapping):
+        lines.append(
+            "Trading Safety: "
+            f"enabled={safety_status.get('enabled')} | kill_switch={safety_status.get('kill_switch_enabled')} | "
+            f"manual_approval={safety_status.get('manual_approval_required')} | pending={safety_status.get('pending_order_count')}"
+        )
     if isinstance(microstructure_status, Mapping):
         lines.append(
             "Microstructure: "
@@ -2093,6 +2287,48 @@ def _get_portfolio_holdings(update: Update, services: BotServices) -> tuple[Port
     if conversation_key is None or services.portfolio_state_store is None:
         return ()
     return services.portfolio_state_store.list_holdings(conversation_key)
+
+
+async def _evaluate_trade_safety(
+    *,
+    services: BotServices,
+    symbol: str,
+    side: str,
+    qty: float,
+    order_type: str,
+    limit_price: float | None,
+    source: str,
+    actor: str,
+    approved: bool,
+    existing_order_id: str | None = None,
+):
+    store = services.trading_safety_store
+    if store is None:
+        return None
+    account = await services.broker_client.get_account() if services.broker_client is not None and services.broker_client.enabled() else None
+    estimated_price = limit_price
+    if estimated_price is None:
+        get_latest_price = getattr(services.market_data_client, "get_latest_price", None)
+        if callable(get_latest_price):
+            try:
+                quote = await get_latest_price(symbol)
+                estimated_price = float(getattr(quote, "price", 0.0) or 0.0) or None
+            except Exception:
+                estimated_price = None
+    return store.evaluate_order(
+        symbol=symbol,
+        side=side,
+        qty=qty,
+        order_type=order_type,
+        limit_price=limit_price,
+        estimated_price=estimated_price,
+        account_equity=getattr(account, "equity", None) if account is not None else None,
+        cash=getattr(account, "cash", None) if account is not None else None,
+        source=source,
+        actor=actor,
+        approved=approved,
+        existing_order_id=existing_order_id,
+    )
 
 
 def _parse_paper_trade_args(args: list[str] | None) -> tuple[str, float, float | None] | None:

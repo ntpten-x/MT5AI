@@ -34,6 +34,7 @@ DEFAULT_HOT_PATH_CACHE_ROOT = PROJECT_ROOT / "data" / "hot_path_cache"
 DEFAULT_ANALYTICS_WAREHOUSE_ROOT = PROJECT_ROOT / "data" / "analytics_warehouse"
 DEFAULT_SEMANTIC_ANALYST_ROOT = PROJECT_ROOT / "data" / "semantic_analyst"
 DEFAULT_DBT_SEMANTIC_ROOT = PROJECT_ROOT / "data" / "dbt_semantic_layer"
+DEFAULT_TRADING_SAFETY_STATE_PATH = PROJECT_ROOT / "data" / "trading_safety.json"
 
 
 class Settings(BaseSettings):
@@ -179,6 +180,24 @@ class Settings(BaseSettings):
     tradier_account_id: str = Field(default="", validation_alias="TRADIER_ACCOUNT_ID")
     tradier_base_url: str = Field(default="https://sandbox.tradier.com", validation_alias="TRADIER_BASE_URL")
     broker_timeout_seconds: float = Field(default=12.0, validation_alias="BROKER_TIMEOUT_SECONDS")
+    trading_safety_enabled: bool = Field(default=True, validation_alias="TRADING_SAFETY_ENABLED")
+    trading_safety_state_path: Path = Field(default=DEFAULT_TRADING_SAFETY_STATE_PATH, validation_alias="TRADING_SAFETY_STATE_PATH")
+    trading_safety_kill_switch: bool = Field(default=False, validation_alias="TRADING_SAFETY_KILL_SWITCH")
+    trading_safety_manual_approval_required: bool = Field(
+        default=False,
+        validation_alias="TRADING_SAFETY_MANUAL_APPROVAL_REQUIRED",
+    )
+    trading_safety_max_order_notional_usd: float = Field(
+        default=5_000.0,
+        validation_alias="TRADING_SAFETY_MAX_ORDER_NOTIONAL_USD",
+    )
+    trading_safety_max_order_qty: float = Field(default=1_000.0, validation_alias="TRADING_SAFETY_MAX_ORDER_QTY")
+    trading_safety_daily_loss_limit_pct: float = Field(default=0.03, validation_alias="TRADING_SAFETY_DAILY_LOSS_LIMIT_PCT")
+    trading_safety_max_drawdown_pct: float = Field(default=0.10, validation_alias="TRADING_SAFETY_MAX_DRAWDOWN_PCT")
+    trading_safety_allow_market_without_quote: bool = Field(
+        default=False,
+        validation_alias="TRADING_SAFETY_ALLOW_MARKET_WITHOUT_QUOTE",
+    )
     cboe_trade_alert_enabled: bool = Field(default=False, validation_alias="CBOE_TRADE_ALERT_ENABLED")
     cboe_trade_alert_api_key: str = Field(default="", validation_alias="CBOE_TRADE_ALERT_API_KEY")
     cboe_trade_alert_base_url: str = Field(default="", validation_alias="CBOE_TRADE_ALERT_BASE_URL")
@@ -443,6 +462,10 @@ class Settings(BaseSettings):
         "bot_min_request_interval_seconds",
         "market_data_http_timeout_seconds",
         "broker_timeout_seconds",
+        "trading_safety_max_order_notional_usd",
+        "trading_safety_max_order_qty",
+        "trading_safety_daily_loss_limit_pct",
+        "trading_safety_max_drawdown_pct",
         "order_flow_timeout_seconds",
         "live_stream_sample_timeout_seconds",
         "live_stream_spread_alert_bps",

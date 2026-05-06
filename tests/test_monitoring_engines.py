@@ -111,3 +111,34 @@ def test_alert_state_store_respects_realert_after_minutes(tmp_path) -> None:
 
     assert len(first) == 1
     assert second == []
+
+
+def test_alert_state_store_suppresses_same_text_with_new_keys(tmp_path) -> None:
+    store = AlertStateStore(path=tmp_path / "alerts.json", suppression_minutes=180)
+
+    first = store.filter_alerts(
+        [
+            SimpleNamespace(
+                key="macro:run-1",
+                text="macro surprise\n- ภาพรวม: CPI | hotter_than_baseline\n- Action: ลด risk asset",
+                metadata={"alert_kind": "macro_surprise", "realert_after_minutes": 180},
+            ),
+            SimpleNamespace(
+                key="macro:run-1-copy",
+                text="macro surprise\n- ภาพรวม: CPI | hotter_than_baseline\n- Action: ลด risk asset",
+                metadata={"alert_kind": "macro_surprise", "realert_after_minutes": 180},
+            )
+        ]
+    )
+    second = store.filter_alerts(
+        [
+            SimpleNamespace(
+                key="macro:run-2",
+                text="macro surprise\n- ภาพรวม: CPI | hotter_than_baseline\n- Action: ลด risk asset",
+                metadata={"alert_kind": "macro_surprise", "realert_after_minutes": 180},
+            )
+        ]
+    )
+
+    assert len(first) == 1
+    assert second == []
