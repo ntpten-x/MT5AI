@@ -934,6 +934,18 @@
       },
       "event": "cycle_skipped",
       "at": "2026-05-06T13:37:10.939858+00:00"
+    },
+    {
+      "status": "skipped",
+      "reason": "no_gold_edge",
+      "symbol": "XAUUSD",
+      "broker_symbol": "GOLD",
+      "context": {
+        "confidence": 0.6024182430927721,
+        "rsi": 55.90325410058601
+      },
+      "event": "cycle_skipped",
+      "at": "2026-05-06T13:38:10.979651+00:00"
     }
   ]
 }
