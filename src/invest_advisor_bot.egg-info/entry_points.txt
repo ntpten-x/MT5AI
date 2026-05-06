@@ -1,3 +1,4 @@
 [console_scripts]
 invest-advisor-bot = invest_advisor_bot.main:main
 invest-advisor-restore-backup = invest_advisor_bot.backup_restore:main
+mt5-gold-trader = invest_advisor_bot.mt5_gold_trader:main

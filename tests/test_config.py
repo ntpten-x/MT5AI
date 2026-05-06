@@ -212,6 +212,38 @@ def test_settings_accepts_ai_simulated_portfolio_configuration(
     assert settings.ai_simulated_portfolio_allow_fractional is False
 
 
+def test_settings_accepts_mt5_gold_trader_configuration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text("system", encoding="utf-8")
+
+    monkeypatch.setenv("TELEGRAM_TOKEN", "token")
+    monkeypatch.setenv("MT5__LOGIN", "334888528")
+    monkeypatch.setenv("MT5__PASSWORD", "secret")
+    monkeypatch.setenv("MT5__SERVER", "XMGlobal-MT5 9")
+    monkeypatch.setenv("MT5__TERMINAL_PATH", r"C:\Program Files\XM Global MT5\terminal64.exe")
+    monkeypatch.setenv("MT5_GOLD_ENABLED", "true")
+    monkeypatch.setenv("MT5_GOLD_DRY_RUN", "true")
+    monkeypatch.setenv("MT5_GOLD_REQUIRE_PREFLIGHT_FOR_LIVE", "true")
+    monkeypatch.setenv("MT5_GOLD_PREFLIGHT_MAX_AGE_MINUTES", "120")
+    monkeypatch.setenv("MT5_GOLD_SYMBOL", "XAUUSD")
+    monkeypatch.setenv("MT5_GOLD_RISK_PER_TRADE_PCT", "0.001")
+    monkeypatch.setenv("MT5_GOLD_MAX_LOT", "0.03")
+
+    settings = Settings(_env_file=None, system_prompt_path=prompt_path, logs_dir=tmp_path / "logs")
+
+    assert settings.mt5_login == 334888528
+    assert settings.mt5_password == "secret"
+    assert settings.mt5_server == "XMGlobal-MT5 9"
+    assert settings.mt5_gold_enabled is True
+    assert settings.mt5_gold_dry_run is True
+    assert settings.mt5_gold_allow_live is False
+    assert settings.mt5_gold_require_preflight_for_live is True
+    assert settings.mt5_gold_preflight_max_age_minutes == 120
+    assert settings.mt5_gold_symbol == "XAUUSD"
+    assert settings.mt5_gold_risk_per_trade_pct == 0.001
+    assert settings.mt5_gold_max_lot == 0.03
+
+
 def test_settings_require_webhook_url_when_transport_is_webhook(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

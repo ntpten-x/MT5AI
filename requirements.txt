@@ -23,5 +23,6 @@ redis>=6.0.0
 vectorbt>=0.28.0
 prefect>=3.0.0
 dbt-core>=1.9.0
+MetaTrader5>=5.0.47
 # Optional extras if you prefer editable-install groups:
-# pip install -e .[observability,analytics,memory,quality,feature-store,evaluation,microstructure,streaming,backtesting,execution,semantic-layer]
+# pip install -e .[observability,analytics,memory,quality,feature-store,evaluation,microstructure,streaming,backtesting,execution,semantic-layer,mt5]

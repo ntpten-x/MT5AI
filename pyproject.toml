@@ -58,6 +58,9 @@ adapters = [
 execution = [
   "prefect>=3.0.0",
 ]
+mt5 = [
+  "MetaTrader5>=5.0.47",
+]
 semantic-layer = [
   "dbt-core>=1.9.0",
 ]
@@ -85,11 +88,13 @@ production = [
   "vectorbt>=0.28.0",
   "prefect>=3.0.0",
   "dbt-core>=1.9.0",
+  "MetaTrader5>=5.0.47",
 ]
 
 [project.scripts]
 invest-advisor-bot = "invest_advisor_bot.main:main"
 invest-advisor-restore-backup = "invest_advisor_bot.backup_restore:main"
+mt5-gold-trader = "invest_advisor_bot.mt5_gold_trader:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -40,6 +40,7 @@ Telegram investment advisor bot for continuous market monitoring, portfolio guid
 - Builds ClickHouse `materialized views` and daily topic/outcome rollups for operational analytics
 - Adds optional `Alpaca` broker paper-trading sandbox with Telegram commands for account, buy, and sell testing
 - Adds optional `Tradier` options/live execution provider support for brokerage and options routing
+- Adds an optional MT5 Gold Trader for automated `XAUUSD` / `GOLD` execution with dry-run defaults, risk caps, spread checks, daily-loss guard, drawdown guard, and kill switch
 - Adds optional `Braintrust` production LLM evaluation logging with local JSONL fallbacks
 - Adds official `Fed / ECB` speech and press-feed ingestion for policy-tone context
 - Adds optional `Langfuse` tracing plus local human-review queue / completion workflow
@@ -83,6 +84,60 @@ pip install -e .[dev]
 copy .env.example .env
 python -m invest_advisor_bot.main
 ```
+
+## MT5 Gold Trader
+
+The MT5 execution path is separate from the Telegram paper broker. It only allows `XAUUSD` / `GOLD` symbols and defaults to dry-run mode.
+
+Install MT5 support:
+
+```powershell
+pip install -e .[mt5]
+```
+
+Recommended first-run config:
+
+```env
+MT5__LOGIN=0
+MT5__PASSWORD=
+MT5__SERVER=XMGlobal-MT5 9
+MT5__TERMINAL_PATH=C:\Program Files\XM Global MT5\terminal64.exe
+MT5_GOLD_ENABLED=true
+MT5_GOLD_SYMBOL=XAUUSD
+MT5_GOLD_TIMEFRAME=M5
+MT5_GOLD_DRY_RUN=true
+MT5_GOLD_ALLOW_LIVE=false
+MT5_GOLD_REQUIRE_PREFLIGHT_FOR_LIVE=true
+MT5_GOLD_RISK_PER_TRADE_PCT=0.0025
+MT5_GOLD_MAX_LOT=0.05
+MT5_GOLD_MAX_POSITIONS=1
+MT5_GOLD_MAX_SPREAD_POINTS=350
+MT5_GOLD_DAILY_LOSS_LIMIT_PCT=0.02
+MT5_GOLD_MAX_DRAWDOWN_PCT=0.06
+```
+
+Commands:
+
+```powershell
+mt5-gold-trader status
+mt5-gold-trader preflight
+mt5-gold-trader cycle
+mt5-gold-trader run
+mt5-gold-trader killswitch-on
+mt5-gold-trader killswitch-off
+```
+
+PowerShell runner:
+
+```powershell
+.\scripts\run-mt5-gold-trader.ps1 -Once
+.\scripts\run-mt5-gold-trader.ps1 -Preflight
+.\scripts\run-mt5-gold-trader.ps1
+```
+
+Live orders require `MT5_GOLD_DRY_RUN=false`, `MT5_GOLD_ALLOW_LIVE=true`, and a recent passing `mt5-gold-trader preflight` when `MT5_GOLD_REQUIRE_PREFLIGHT_FOR_LIVE=true`. Keep dry-run enabled until MT5 login, broker symbol resolution, spread, lot sizing, SL/TP placement, and audit logs are verified on demo.
+
+For a small account where broker minimum lot is `0.01`, keep `MT5_GOLD_MAX_LOT=0.01` and use preflight to verify whether the current ATR-based stop fits the configured risk budget before enabling live.
 
 If you want MLflow tracing, install the optional extra before running:
 
@@ -129,6 +184,7 @@ Recommended settings:
 - optionally provide `BROKER_SANDBOX_ENABLED=true` with `ALPACA_API_KEY` and `ALPACA_API_SECRET` for paper-trading execution sandbox
 - optionally set `BROKER_PROVIDER=tradier` with `TRADIER_ACCESS_TOKEN` and `TRADIER_ACCOUNT_ID` for Tradier execution / options routing
 - keep `TRADING_SAFETY_ENABLED=true`; use `TRADING_SAFETY_MANUAL_APPROVAL_REQUIRED=true` when every paper order should wait for `/safetyapprove`
+- optionally set `MT5_GOLD_ENABLED=true` and configure `MT5__LOGIN`, `MT5__PASSWORD`, `MT5__SERVER`, and `MT5__TERMINAL_PATH` for the dedicated MT5 XAUUSD trader
 - optionally set `BRAINTRUST_ENABLED=true` with `BRAINTRUST_API_KEY` if you want production LLM quality logs uploaded to Braintrust
 - optionally set `LANGFUSE_ENABLED=true` with `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` for Langfuse tracing plus local JSONL fallback
 - optionally set `HUMAN_REVIEW_ENABLED=true` to queue fallback / low-confidence recommendations for manual review via `/reviewqueue` and `/reviewdone`
@@ -283,6 +339,23 @@ BROKER_PROVIDER=alpaca
 TRADIER_ACCESS_TOKEN=
 TRADIER_ACCOUNT_ID=
 TRADIER_BASE_URL=https://sandbox.tradier.com
+MT5__LOGIN=0
+MT5__PASSWORD=
+MT5__SERVER=
+MT5__TERMINAL_PATH=C:\Program Files\XM Global MT5\terminal64.exe
+MT5_GOLD_ENABLED=false
+MT5_GOLD_SYMBOL=XAUUSD
+MT5_GOLD_TIMEFRAME=M5
+MT5_GOLD_DRY_RUN=true
+MT5_GOLD_ALLOW_LIVE=false
+MT5_GOLD_REQUIRE_PREFLIGHT_FOR_LIVE=true
+MT5_GOLD_PREFLIGHT_MAX_AGE_MINUTES=360
+MT5_GOLD_RISK_PER_TRADE_PCT=0.0025
+MT5_GOLD_MAX_LOT=0.05
+MT5_GOLD_MAX_POSITIONS=1
+MT5_GOLD_MAX_SPREAD_POINTS=350
+MT5_GOLD_DAILY_LOSS_LIMIT_PCT=0.02
+MT5_GOLD_MAX_DRAWDOWN_PCT=0.06
 TRADING_SAFETY_ENABLED=true
 TRADING_SAFETY_STATE_PATH=data/trading_safety.json
 TRADING_SAFETY_KILL_SWITCH=false

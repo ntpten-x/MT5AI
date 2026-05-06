@@ -35,6 +35,7 @@ DEFAULT_ANALYTICS_WAREHOUSE_ROOT = PROJECT_ROOT / "data" / "analytics_warehouse"
 DEFAULT_SEMANTIC_ANALYST_ROOT = PROJECT_ROOT / "data" / "semantic_analyst"
 DEFAULT_DBT_SEMANTIC_ROOT = PROJECT_ROOT / "data" / "dbt_semantic_layer"
 DEFAULT_TRADING_SAFETY_STATE_PATH = PROJECT_ROOT / "data" / "trading_safety.json"
+DEFAULT_MT5_GOLD_STATE_PATH = PROJECT_ROOT / "data" / "mt5_gold_trader.json"
 
 
 class Settings(BaseSettings):
@@ -180,6 +181,41 @@ class Settings(BaseSettings):
     tradier_account_id: str = Field(default="", validation_alias="TRADIER_ACCOUNT_ID")
     tradier_base_url: str = Field(default="https://sandbox.tradier.com", validation_alias="TRADIER_BASE_URL")
     broker_timeout_seconds: float = Field(default=12.0, validation_alias="BROKER_TIMEOUT_SECONDS")
+    mt5_login: int = Field(default=0, validation_alias="MT5__LOGIN")
+    mt5_password: str = Field(default="", validation_alias="MT5__PASSWORD")
+    mt5_server: str = Field(default="", validation_alias="MT5__SERVER")
+    mt5_terminal_path: str = Field(default="", validation_alias="MT5__TERMINAL_PATH")
+    mt5_connect_timeout_ms: int = Field(default=60_000, validation_alias="MT5__CONNECT_TIMEOUT_MS")
+    mt5_gold_enabled: bool = Field(default=False, validation_alias="MT5_GOLD_ENABLED")
+    mt5_gold_symbol: str = Field(default="XAUUSD", validation_alias="MT5_GOLD_SYMBOL")
+    mt5_gold_timeframe: str = Field(default="M5", validation_alias="MT5_GOLD_TIMEFRAME")
+    mt5_gold_history_bars: int = Field(default=240, validation_alias="MT5_GOLD_HISTORY_BARS")
+    mt5_gold_poll_seconds: int = Field(default=60, validation_alias="MT5_GOLD_POLL_SECONDS")
+    mt5_gold_dry_run: bool = Field(default=True, validation_alias="MT5_GOLD_DRY_RUN")
+    mt5_gold_allow_live: bool = Field(default=False, validation_alias="MT5_GOLD_ALLOW_LIVE")
+    mt5_gold_require_preflight_for_live: bool = Field(
+        default=True,
+        validation_alias="MT5_GOLD_REQUIRE_PREFLIGHT_FOR_LIVE",
+    )
+    mt5_gold_preflight_max_age_minutes: int = Field(default=360, validation_alias="MT5_GOLD_PREFLIGHT_MAX_AGE_MINUTES")
+    mt5_gold_kill_switch: bool = Field(default=False, validation_alias="MT5_GOLD_KILL_SWITCH")
+    mt5_gold_state_path: Path = Field(default=DEFAULT_MT5_GOLD_STATE_PATH, validation_alias="MT5_GOLD_STATE_PATH")
+    mt5_gold_risk_per_trade_pct: float = Field(default=0.0025, validation_alias="MT5_GOLD_RISK_PER_TRADE_PCT")
+    mt5_gold_max_lot: float = Field(default=0.05, validation_alias="MT5_GOLD_MAX_LOT")
+    mt5_gold_max_positions: int = Field(default=1, validation_alias="MT5_GOLD_MAX_POSITIONS")
+    mt5_gold_min_trade_interval_seconds: int = Field(default=900, validation_alias="MT5_GOLD_MIN_TRADE_INTERVAL_SECONDS")
+    mt5_gold_max_spread_points: int = Field(default=350, validation_alias="MT5_GOLD_MAX_SPREAD_POINTS")
+    mt5_gold_daily_loss_limit_pct: float = Field(default=0.02, validation_alias="MT5_GOLD_DAILY_LOSS_LIMIT_PCT")
+    mt5_gold_max_drawdown_pct: float = Field(default=0.06, validation_alias="MT5_GOLD_MAX_DRAWDOWN_PCT")
+    mt5_gold_sl_atr_mult: float = Field(default=1.8, validation_alias="MT5_GOLD_SL_ATR_MULT")
+    mt5_gold_tp_atr_mult: float = Field(default=2.4, validation_alias="MT5_GOLD_TP_ATR_MULT")
+    mt5_gold_fast_ema: int = Field(default=21, validation_alias="MT5_GOLD_FAST_EMA")
+    mt5_gold_slow_ema: int = Field(default=55, validation_alias="MT5_GOLD_SLOW_EMA")
+    mt5_gold_rsi_period: int = Field(default=14, validation_alias="MT5_GOLD_RSI_PERIOD")
+    mt5_gold_atr_period: int = Field(default=14, validation_alias="MT5_GOLD_ATR_PERIOD")
+    mt5_gold_magic: int = Field(default=334888528, validation_alias="MT5_GOLD_MAGIC")
+    mt5_gold_deviation_points: int = Field(default=50, validation_alias="MT5_GOLD_DEVIATION_POINTS")
+    mt5_gold_comment_prefix: str = Field(default="MT5AI-GOLD", validation_alias="MT5_GOLD_COMMENT_PREFIX")
     trading_safety_enabled: bool = Field(default=True, validation_alias="TRADING_SAFETY_ENABLED")
     trading_safety_state_path: Path = Field(default=DEFAULT_TRADING_SAFETY_STATE_PATH, validation_alias="TRADING_SAFETY_STATE_PATH")
     trading_safety_kill_switch: bool = Field(default=False, validation_alias="TRADING_SAFETY_KILL_SWITCH")
@@ -466,6 +502,12 @@ class Settings(BaseSettings):
         "trading_safety_max_order_qty",
         "trading_safety_daily_loss_limit_pct",
         "trading_safety_max_drawdown_pct",
+        "mt5_gold_risk_per_trade_pct",
+        "mt5_gold_max_lot",
+        "mt5_gold_daily_loss_limit_pct",
+        "mt5_gold_max_drawdown_pct",
+        "mt5_gold_sl_atr_mult",
+        "mt5_gold_tp_atr_mult",
         "order_flow_timeout_seconds",
         "live_stream_sample_timeout_seconds",
         "live_stream_spread_alert_bps",
@@ -532,6 +574,19 @@ class Settings(BaseSettings):
         "qdrant_vector_size",
         "backtesting_history_limit",
         "backtesting_min_history_points",
+        "mt5_connect_timeout_ms",
+        "mt5_gold_history_bars",
+        "mt5_gold_poll_seconds",
+        "mt5_gold_preflight_max_age_minutes",
+        "mt5_gold_max_positions",
+        "mt5_gold_min_trade_interval_seconds",
+        "mt5_gold_max_spread_points",
+        "mt5_gold_fast_ema",
+        "mt5_gold_slow_ema",
+        "mt5_gold_rsi_period",
+        "mt5_gold_atr_period",
+        "mt5_gold_magic",
+        "mt5_gold_deviation_points",
     )
     @classmethod
     def validate_non_negative_int(cls, value: int) -> int:
