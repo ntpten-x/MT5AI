@@ -946,6 +946,158 @@
       },
       "event": "cycle_skipped",
       "at": "2026-05-06T13:38:10.979651+00:00"
+    },
+    {
+      "status": "skipped",
+      "reason": "no_gold_edge",
+      "symbol": "XAUUSD",
+      "broker_symbol": "GOLD",
+      "context": {
+        "confidence": 0.6002060942063733,
+        "rsi": 56.58479101173117
+      },
+      "event": "cycle_skipped",
+      "at": "2026-05-06T13:39:11.033063+00:00"
+    },
+    {
+      "status": "skipped",
+      "reason": "no_gold_edge",
+      "symbol": "XAUUSD",
+      "broker_symbol": "GOLD",
+      "context": {
+        "confidence": 0.5813561550041214,
+        "rsi": 55.55464376543792
+      },
+      "event": "cycle_skipped",
+      "at": "2026-05-06T13:40:11.071170+00:00"
+    },
+    {
+      "status": "skipped",
+      "reason": "no_gold_edge",
+      "symbol": "XAUUSD",
+      "broker_symbol": "GOLD",
+      "context": {
+        "confidence": 0.5747609495762067,
+        "rsi": 57.16394068899943
+      },
+      "event": "cycle_skipped",
+      "at": "2026-05-06T13:41:11.153484+00:00"
+    },
+    {
+      "status": "skipped",
+      "reason": "no_gold_edge",
+      "symbol": "XAUUSD",
+      "broker_symbol": "GOLD",
+      "context": {
+        "confidence": 0.5807375871701775,
+        "rsi": 55.71063399947841
+      },
+      "event": "cycle_skipped",
+      "at": "2026-05-06T13:42:11.208089+00:00"
+    },
+    {
+      "status": "skipped",
+      "reason": "no_gold_edge",
+      "symbol": "XAUUSD",
+      "broker_symbol": "GOLD",
+      "context": {
+        "confidence": 0.5832121905606527,
+        "rsi": 55.08000975569232
+      },
+      "event": "cycle_skipped",
+      "at": "2026-05-06T13:43:11.259226+00:00"
+    },
+    {
+      "status": "skipped",
+      "reason": "no_gold_edge",
+      "symbol": "XAUUSD",
+      "broker_symbol": "GOLD",
+      "context": {
+        "confidence": 0.5812088719294356,
+        "rsi": 55.59188387978066
+      },
+      "event": "cycle_skipped",
+      "at": "2026-05-06T13:44:11.307196+00:00"
+    },
+    {
+      "status": "skipped",
+      "reason": "no_gold_edge",
+      "symbol": "XAUUSD",
+      "broker_symbol": "GOLD",
+      "context": {
+        "confidence": 0.5557397685056691,
+        "rsi": 56.62241656819864
+      },
+      "event": "cycle_skipped",
+      "at": "2026-05-06T13:45:11.344759+00:00"
+    },
+    {
+      "status": "skipped",
+      "reason": "no_gold_edge",
+      "symbol": "XAUUSD",
+      "broker_symbol": "GOLD",
+      "context": {
+        "confidence": 0.56521106295041,
+        "rsi": 53.739488117726296
+      },
+      "event": "cycle_skipped",
+      "at": "2026-05-06T13:46:11.366142+00:00"
+    },
+    {
+      "status": "skipped",
+      "reason": "no_gold_edge",
+      "symbol": "XAUUSD",
+      "broker_symbol": "GOLD",
+      "context": {
+        "confidence": 0.5617681270121468,
+        "rsi": 54.857507383049075
+      },
+      "event": "cycle_skipped",
+      "at": "2026-05-06T13:47:11.388770+00:00"
+    },
+    {
+      "status": "skipped",
+      "reason": "position_size_below_minimum",
+      "symbol": "XAUUSD",
+      "broker_symbol": "GOLD",
+      "context": {
+        "risk_amount": 5.9776
+      },
+      "event": "cycle_skipped",
+      "at": "2026-05-06T13:48:16.463415+00:00"
+    },
+    {
+      "status": "skipped",
+      "reason": "position_size_below_minimum",
+      "symbol": "XAUUSD",
+      "broker_symbol": "GOLD",
+      "context": {
+        "risk_amount": 5.9776
+      },
+      "event": "cycle_skipped",
+      "at": "2026-05-06T13:49:22.095795+00:00"
+    },
+    {
+      "status": "skipped",
+      "reason": "position_size_below_minimum",
+      "symbol": "XAUUSD",
+      "broker_symbol": "GOLD",
+      "context": {
+        "risk_amount": 5.9776
+      },
+      "event": "cycle_skipped",
+      "at": "2026-05-06T13:50:22.140219+00:00"
+    },
+    {
+      "status": "skipped",
+      "reason": "position_size_below_minimum",
+      "symbol": "XAUUSD",
+      "broker_symbol": "GOLD",
+      "context": {
+        "risk_amount": 5.9776
+      },
+      "event": "cycle_skipped",
+      "at": "2026-05-06T13:51:22.191510+00:00"
     }
   ]
 }
