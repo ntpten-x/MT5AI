@@ -5,7 +5,8 @@ from pathlib import Path
 import pytest
 
 from invest_advisor_bot.config import Settings
-from invest_advisor_bot.main import main, resolve_database_url
+from invest_advisor_bot.bot.handlers import BOT_SERVICES_KEY
+from invest_advisor_bot.main import build_application, main, resolve_database_url
 
 
 def _make_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
@@ -102,3 +103,17 @@ def test_main_runs_webhook_when_transport_is_webhook(
     assert captured["application"].__class__.__name__ == "FakeApplication"
     assert captured["webhook_url"] == "https://example.onrender.com"
     assert captured["webhook_path"] == "/telegram/webhook"
+
+
+def test_build_application_wires_trading_safety_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _make_settings(tmp_path, monkeypatch)
+    settings.telegram_token = "123456:test-token"
+    settings.database_url = ""
+
+    application = build_application(settings, database_url="")
+
+    services = application.bot_data[BOT_SERVICES_KEY]
+    assert services.trading_safety_store is not None
